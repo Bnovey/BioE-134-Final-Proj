@@ -31,6 +31,21 @@ from creseq_mcp.qc.library import (
     variant_family_coverage,
 )
 
+from creseq_mcp.stats.library import (
+    aggregate_fastq_counts_to_elements,
+    call_active_elements,
+    count_barcodes_from_fastq,
+    interpret_literature_evidence,
+    literature_search_for_motifs,
+    motif_enrichment_summary,
+    normalize_activity,
+    prepare_rag_context,
+    rank_cre_candidates,
+    search_encode_tf,
+    search_jaspar_motif,
+    search_pubmed,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -57,6 +72,26 @@ def _summary(result: tuple | dict) -> dict:
         k: v[1] if isinstance(v, tuple) else v for k, v in result.items()
     }
     return json.loads(json.dumps(s, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
+
+def _serialise(result: tuple | dict) -> dict:
+    """Convert a (DataFrame, summary) result to JSON-safe rows + summary."""
+    import pandas as pd
+
+    if isinstance(result, tuple):
+        df, summary = result
+        out = {
+            "rows": df.to_dict(orient="records") if isinstance(df, pd.DataFrame) else [],
+            "summary": summary,
+        }
+    else:
+        out = result
+
+    return json.loads(
+        json.dumps(
+            out,
+            default=lambda o: o.item() if hasattr(o, "item") else str(o),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +283,257 @@ def tool_process_library(
         barcode_len=barcode_len,
         barcode_end=barcode_end,
         max_mismatch=max_mismatch,
+    )
+
+# ---------------------------------------------------------------------------
+# Stats tool registrations
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def tool_normalize_activity(
+    count_table_path: str,
+    pseudocount: float = 1.0,
+    dna_col: str = "dna_counts",
+    rna_col: str = "rna_counts",
+    element_col: str = "element_id",
+) -> dict:
+    """
+    Compute log2 RNA/DNA activity scores for each CRE.
+
+    Use after QC has produced element-level DNA and RNA count tables.
+    """
+    return _serialise(
+        normalize_activity(
+            count_table_path=count_table_path,
+            pseudocount=pseudocount,
+            dna_col=dna_col,
+            rna_col=rna_col,
+            element_col=element_col,
+        )
+    )
+
+
+@mcp.tool()
+def tool_call_active_elements(
+    activity_table_path: str,
+    activity_col: str = "log2_activity",
+    category_col: str = "designed_category",
+    negative_control_label: str = "negative_control",
+    activity_threshold: float = 1.0,
+    fdr_threshold: float = 0.05,
+) -> dict:
+    """
+    Classify CREs as active/inactive using an empirical negative-control background.
+    """
+    return _serialise(
+        call_active_elements(
+            activity_table_path=activity_table_path,
+            activity_col=activity_col,
+            category_col=category_col,
+            negative_control_label=negative_control_label,
+            activity_threshold=activity_threshold,
+            fdr_threshold=fdr_threshold,
+        )
+    )
+
+
+@mcp.tool()
+def tool_rank_cre_candidates(
+    activity_table_path: str,
+    top_n: int = 20,
+    activity_col: str = "log2_activity",
+    q_col: str = "q_value",
+) -> dict:
+    """
+    Rank CRE candidates by activity strength and statistical confidence.
+    """
+    return _serialise(
+        rank_cre_candidates(
+            activity_table_path=activity_table_path,
+            top_n=top_n,
+            activity_col=activity_col,
+            q_col=q_col,
+        )
+    )
+
+
+@mcp.tool()
+def tool_motif_enrichment_summary(
+    activity_table_path: str,
+    motif_col: str = "top_motif",
+    active_col: str = "active",
+) -> dict:
+    """
+    Summarize TF motifs enriched among active CREs.
+    """
+    return _serialise(
+        motif_enrichment_summary(
+            activity_table_path=activity_table_path,
+            motif_col=motif_col,
+            active_col=active_col,
+        )
+    )
+
+
+@mcp.tool()
+def tool_prepare_rag_context(
+    ranked_table_path: str,
+    top_n: int = 10,
+    motif_col: str = "top_motif",
+    target_cell_type: str | None = None,
+    off_target_cell_type: str | None = None,
+) -> dict:
+    """
+    Prepare top CREs and TF motif search terms for literature/API interpretation.
+    """
+    return _serialise(
+        prepare_rag_context(
+            ranked_table_path=ranked_table_path,
+            top_n=top_n,
+            motif_col=motif_col,
+            target_cell_type=target_cell_type,
+            off_target_cell_type=off_target_cell_type,
+        )
+    )
+
+
+@mcp.tool()
+def tool_count_barcodes_from_fastq(
+    fastq_path: str,
+    barcode_start: int = 0,
+    barcode_length: int = 10,
+    max_reads: int | None = None,
+) -> dict:
+    """
+    Count fixed-position barcodes directly from raw FASTQ reads.
+    """
+    return _serialise(
+        count_barcodes_from_fastq(
+            fastq_path=fastq_path,
+            barcode_start=barcode_start,
+            barcode_length=barcode_length,
+            max_reads=max_reads,
+        )
+    )
+
+
+@mcp.tool()
+def tool_aggregate_fastq_counts_to_elements(
+    dna_barcode_counts_path: str,
+    rna_barcode_counts_path: str,
+    barcode_map_path: str,
+) -> dict:
+    """
+    Aggregate DNA/RNA barcode counts to element-level CRE activity values.
+    """
+    return _serialise(
+        aggregate_fastq_counts_to_elements(
+            dna_barcode_counts_path=dna_barcode_counts_path,
+            rna_barcode_counts_path=rna_barcode_counts_path,
+            barcode_map_path=barcode_map_path,
+        )
+    )
+
+
+@mcp.tool()
+def tool_search_pubmed(
+    query: str,
+    max_results: int = 5,
+    email: str | None = None,
+    api_key: str | None = None,
+) -> dict:
+    """
+    Search PubMed for literature evidence using NCBI E-utilities.
+    """
+    return _serialise(
+        search_pubmed(
+            query=query,
+            max_results=max_results,
+            email=email,
+            api_key=api_key,
+        )
+    )
+
+
+@mcp.tool()
+def tool_search_jaspar_motif(
+    tf_name: str,
+    species: int = 9606,
+    collection: str = "CORE",
+    max_results: int = 5,
+) -> dict:
+    """
+    Search JASPAR for TF motif matrix profiles.
+    """
+    return _serialise(
+        search_jaspar_motif(
+            tf_name=tf_name,
+            species=species,
+            collection=collection,
+            max_results=max_results,
+        )
+    )
+
+
+@mcp.tool()
+def tool_search_encode_tf(
+    tf_name: str,
+    cell_type: str | None = None,
+    max_results: int = 5,
+) -> dict:
+    """
+    Search ENCODE for TF/cell-type functional genomics records.
+    """
+    return _serialise(
+        search_encode_tf(
+            tf_name=tf_name,
+            cell_type=cell_type,
+            max_results=max_results,
+        )
+    )
+
+
+@mcp.tool()
+def tool_literature_search_for_motifs(
+    motif_table_path: str,
+    motif_col: str = "motif",
+    target_cell_type: str | None = None,
+    off_target_cell_type: str | None = None,
+    top_n_motifs: int = 5,
+    max_pubmed_results_per_motif: int = 3,
+    max_database_results_per_motif: int = 3,
+    email: str | None = None,
+    ncbi_api_key: str | None = None,
+) -> dict:
+    """
+    Run PubMed, JASPAR, and ENCODE API searches for top enriched motifs.
+    """
+    return _serialise(
+        literature_search_for_motifs(
+            motif_table_path=motif_table_path,
+            motif_col=motif_col,
+            target_cell_type=target_cell_type,
+            off_target_cell_type=off_target_cell_type,
+            top_n_motifs=top_n_motifs,
+            max_pubmed_results_per_motif=max_pubmed_results_per_motif,
+            max_database_results_per_motif=max_database_results_per_motif,
+            email=email,
+            ncbi_api_key=ncbi_api_key,
+        )
+    )
+
+
+@mcp.tool()
+def tool_interpret_literature_evidence(
+    evidence_table_path: str,
+) -> dict:
+    """
+    Summarize API-retrieved literature/database evidence for display.
+    """
+    return _serialise(
+        interpret_literature_evidence(
+            evidence_table_path=evidence_table_path,
+        )
     )
 
 
