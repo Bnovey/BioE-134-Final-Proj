@@ -88,68 +88,143 @@ with st.sidebar:
 # PAGE: UPLOAD
 # ══════════════════════════════════════════════════════════════════════════════
 if page == "📤 Upload":
-    st.header("Upload CRE-seq Data")
-    st.markdown(
-        "Upload your **plasmid-DNA FASTQ** and **barcode reference library**. "
-        "The pipeline extracts barcodes, aligns to designed sequences, and prepares "
-        "all QC files automatically."
-    )
+    from creseq_mcp.processing import mpraflow as _mpraflow
+    _use_mpraflow = False  # TEMP: force built-in pipeline for testing
 
-    col_fq, col_ref = st.columns(2)
-    with col_fq:
-        st.subheader("Plasmid-DNA FASTQ")
-        st.caption(".fastq or .fastq.gz")
-        fastq_file = st.file_uploader("FASTQ", type=["fastq", "gz", "fq"], key="up_fastq")
-    with col_ref:
-        st.subheader("Barcode Reference Library")
-        st.caption("TSV: oligo_id, barcode, sequence, designed_category")
-        ref_file = st.file_uploader("Reference TSV", type=["tsv", "txt", "csv"], key="up_ref")
+    st.header("Upload CRE-seq Data")
+    st.caption("Enter local file paths — no upload needed since the app runs on your machine.")
+
+    # ── File path inputs ─────────────────────────────────────────────────────
+    col1, col2 = st.columns(2)
+    with col1:
+        assoc_path_str = st.text_input(
+            "Association FASTQ (barcode read)",
+            placeholder="~/Downloads/Association/ENCFF853TAM.fastq.gz",
+            help="R2 from your association sequencing run — contains the random barcodes.",
+        )
+        dna_path_str = st.text_input(
+            "DNA Counting FASTQ",
+            placeholder="~/Downloads/DNA Reps/ENCFF062NLF.fastq.gz",
+            help="Sequencing run from your plasmid pool (separate from association).",
+        )
+    with col2:
+        ref_path_str = st.text_input(
+            "Barcode Reference TSV",
+            placeholder="~/Downloads/reference_library.tsv",
+            help="TSV with columns: oligo_id, barcode, sequence, designed_category",
+        )
+        rna_paths_str = st.text_input(
+            "RNA FASTQs (comma-separated paths)",
+            placeholder="~/Downloads/RNA_Counting/ENCFF388KGK.fastq.gz, ~/Downloads/RNA_Counting/ENCFF184MJL.fastq.gz.1",
+            help="One path per replicate, separated by commas.",
+        )
 
     with st.expander("Barcode options"):
-        bc_len = st.number_input("Barcode length (bp)", min_value=6, max_value=20, value=10)
-        bc_end = st.radio("Barcode position in read", ["3prime", "5prime"], horizontal=True)
-        bc_mm = st.number_input("Max mismatches for barcode matching", min_value=0, max_value=2, value=1)
+        bc_col1, bc_col2, bc_col3 = st.columns(3)
+        bc_len = bc_col1.number_input("Barcode length (bp)", min_value=6, max_value=30, value=15)
+        bc_end = bc_col2.radio("Barcode position", ["3prime", "5prime"], horizontal=True)
+        bc_mm  = bc_col3.number_input("Max mismatches", min_value=0, max_value=2, value=0)
 
-    if fastq_file and ref_file:
-        if st.button("▶ Process library", type="primary", use_container_width=True):
-            from creseq_mcp.processing.pipeline import process_and_save
+    # ── Resolve and validate paths ───────────────────────────────────────────
+    def _resolve(s: str) -> Path | None:
+        s = s.strip()
+        if not s:
+            return None
+        p = Path(s).expanduser()
+        return p if p.exists() else None
 
-            fastq_path = UPLOAD_DIR / fastq_file.name
-            ref_path = UPLOAD_DIR / ref_file.name
-            (UPLOAD_DIR / fastq_file.name).write_bytes(fastq_file.read())
-            (UPLOAD_DIR / ref_file.name).write_bytes(ref_file.read())
+    assoc_path = _resolve(assoc_path_str)
+    ref_path   = _resolve(ref_path_str)
+    dna_path   = _resolve(dna_path_str)
+    rna_paths  = [p for s in rna_paths_str.split(",") if (p := _resolve(s)) is not None] if rna_paths_str.strip() else []
 
-            with st.spinner("Processing FASTQ… this may take a moment"):
-                try:
-                    stats = process_and_save(
-                        fastq_path, ref_path, UPLOAD_DIR,
-                        barcode_len=int(bc_len),
-                        barcode_end=bc_end,
-                        max_mismatch=int(bc_mm),
-                    )
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Total reads", f"{stats['total_reads']:,}")
-                    col2.metric("Unique barcodes", f"{stats['unique_barcodes']:,}")
-                    col3.metric("Oligos represented", f"{stats['oligos_represented']:,}")
-                    col4.metric("Oligos in reference", f"{stats['oligos_in_reference']:,}")
-                    st.success("Processing complete — QC files are ready. Go to Chat to run QC.")
-                except Exception as exc:
-                    st.error(f"Processing failed: {exc}")
-    else:
-        st.info("Upload both files above to enable processing.")
+    # Show validation feedback
+    for label, val, raw in [
+        ("Association FASTQ", assoc_path, assoc_path_str),
+        ("Reference TSV", ref_path, ref_path_str),
+        ("DNA FASTQ", dna_path, dna_path_str),
+    ]:
+        if raw.strip() and not val:
+            st.error(f"{label}: file not found — {raw.strip()}")
 
+    if rna_paths_str.strip():
+        for s in rna_paths_str.split(","):
+            p = _resolve(s)
+            if not p:
+                st.error(f"RNA FASTQ not found: {s.strip()}")
+
+    # ── Process button ───────────────────────────────────────────────────────
+    ready = assoc_path and ref_path and dna_path and len(rna_paths) > 0
+    if not ready:
+        missing = [n for n, v in [
+            ("Association FASTQ", assoc_path), ("Reference TSV", ref_path),
+            ("DNA FASTQ", dna_path), ("RNA FASTQs", rna_paths or None),
+        ] if not v]
+        if missing:
+            st.info(f"Still needed: {', '.join(missing)}")
+
+    if st.button("▶ Process all files", type="primary", use_container_width=True, disabled=not ready):
+        from creseq_mcp.processing.pipeline import process_and_save
+        from creseq_mcp.processing.counting import process_dna_counting, process_rna_counting
+        from creseq_mcp.qc.activity import activity_report
+
+        progress = st.progress(0, text="Step 1/4 — Association…")
+        try:
+            assoc_stats = process_and_save(
+                assoc_path, ref_path, UPLOAD_DIR,
+                barcode_len=int(bc_len), barcode_end=bc_end, max_mismatch=int(bc_mm),
+            )
+            progress.progress(25, text="Step 2/4 — DNA counting…")
+
+            dna_stats = process_dna_counting(
+                dna_path, UPLOAD_DIR / "mapping_table.tsv", UPLOAD_DIR,
+                barcode_len=int(bc_len), barcode_end=bc_end, max_mismatch=int(bc_mm),
+            )
+            progress.progress(50, text="Step 3/4 — RNA counting…")
+
+            rna_stats = process_rna_counting(
+                rna_paths, UPLOAD_DIR / "mapping_table.tsv", UPLOAD_DIR,
+                barcode_len=int(bc_len), barcode_end=bc_end, max_mismatch=int(bc_mm),
+            )
+            progress.progress(75, text="Step 4/4 — Activity analysis…")
+
+            manifest_path = UPLOAD_DIR / "design_manifest.tsv"
+            _, act_summary = activity_report(
+                UPLOAD_DIR / "plasmid_counts.tsv",
+                UPLOAD_DIR / "rna_counts.tsv",
+                manifest_path if manifest_path.exists() else None,
+                upload_dir=UPLOAD_DIR,
+            )
+            progress.progress(100, text="Done!")
+
+            st.success("All steps complete — go to Chat to run QC or QC & Plots to see results.")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Reads (assoc)", f"{assoc_stats['total_reads']:,}")
+            c2.metric("Unique barcodes", f"{assoc_stats['unique_barcodes']:,}")
+            c3.metric("DNA match rate", f"{dna_stats['match_rate']:.1%}")
+            c4.metric("RNA replicates", len(rna_stats["replicates"]))
+            c5.metric("Active CREs", f"{act_summary['n_active']:,}")
+
+        except Exception as exc:
+            progress.empty()
+            st.error(f"Pipeline failed: {exc}")
+
+    # ── File status ──────────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Loaded files")
-    for label, fname in [
+    st.subheader("Generated files")
+    cols = st.columns(5)
+    for col, (label, fname) in zip(cols, [
         ("Mapping table", "mapping_table.tsv"),
         ("Plasmid counts", "plasmid_counts.tsv"),
         ("Design manifest", "design_manifest.tsv"),
-    ]:
+        ("RNA counts", "rna_counts.tsv"),
+        ("Activity results", "activity_results.tsv"),
+    ]):
         p = UPLOAD_DIR / fname
         if p.exists():
-            st.success(f"**{label}** — {fname} ({p.stat().st_size:,} bytes)")
+            col.success(f"**{label}**")
         else:
-            st.warning(f"**{label}** — not uploaded")
+            col.warning(f"**{label}**")
 
 
 
@@ -265,17 +340,31 @@ elif page == "📊 QC & Plots":
 
     # ── Activity Plots ──────────────────────────────────────────────────────
     with tab_activity:
-        n_active = df["active"].sum()
-        n_inactive = len(df) - n_active
+        _act_path = UPLOAD_DIR / "activity_results.tsv"
+        if _act_path.exists():
+            act_df = pd.read_csv(_act_path, sep="\t")
+            if "oligo_id" in act_df.columns and "element_id" not in act_df.columns:
+                act_df = act_df.rename(columns={"oligo_id": "element_id"})
+            st.info("Showing real activity data from activity_results.tsv", icon="✅")
+        else:
+            act_df = df
+            st.info(
+                "No activity results yet — showing demo data. "
+                "Complete all four Upload steps to see real results.",
+                icon="ℹ️",
+            )
+
+        n_active = int(act_df["active"].sum()) if "active" in act_df.columns else 0
+        n_inactive = len(act_df) - n_active
         col1, col2, col3 = st.columns(3)
         col1.metric("Active CREs", f"{n_active:,}")
         col2.metric("Inactive CREs", f"{n_inactive:,}")
-        col3.metric("Activity rate", f"{n_active / len(df) * 100:.1f}%")
+        col3.metric("Activity rate", f"{n_active / max(len(act_df), 1) * 100:.1f}%")
 
         c1, c2 = st.columns(2)
         with c1:
             fig = px.histogram(
-                df, x="log2_ratio",
+                act_df, x="log2_ratio",
                 color="active",
                 color_discrete_map={True: "#E45756", False: "#72B7B2"},
                 nbins=60,
@@ -288,31 +377,48 @@ elif page == "📊 QC & Plots":
             st.plotly_chart(fig, use_container_width=True)
 
         with c2:
-            if "pval" in df.columns:
-                volcano_df = df.copy()
-                volcano_df["neg_log10_p"] = -np.log10(volcano_df["pval"].clip(lower=1e-10))
+            pval_col = "fdr" if "fdr" in act_df.columns else "pval"
+            if pval_col in act_df.columns and act_df[pval_col].notna().any():
+                volcano_df = act_df.copy()
+                volcano_df["neg_log10_p"] = -np.log10(volcano_df[pval_col].clip(lower=1e-10))
+                hover_col = "element_id" if "element_id" in volcano_df.columns else None
                 fig = px.scatter(
                     volcano_df, x="log2_ratio", y="neg_log10_p",
                     color="active",
                     color_discrete_map={True: "#E45756", False: "#72B7B2"},
                     opacity=0.6,
-                    title="Volcano Plot",
+                    title=f"Volcano Plot (y = −log₁₀ {pval_col})",
                     labels={
                         "log2_ratio": "log₂ RNA/DNA",
-                        "neg_log10_p": "−log₁₀(p-value)",
+                        "neg_log10_p": f"−log₁₀({pval_col})",
                         "active": "Active",
                     },
-                    hover_data=["element_id"] if "element_id" in df.columns else None,
+                    hover_data=[hover_col] if hover_col else None,
                 )
                 fig.add_vline(x=1.0, line_dash="dash", line_color="gray")
                 fig.add_hline(y=-np.log10(0.05), line_dash="dash", line_color="gray")
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Upload data with a `pval` column to see the volcano plot.")
+                st.info("No p-values available for volcano plot.")
 
-        if "chromatin_state" in df.columns:
+        if "designed_category" in act_df.columns:
+            cat_counts = (
+                act_df.groupby(["designed_category", "active"])
+                .size()
+                .reset_index(name="count")
+            )
+            fig = px.bar(
+                cat_counts, x="designed_category", y="count",
+                color="active",
+                color_discrete_map={True: "#E45756", False: "#72B7B2"},
+                barmode="stack",
+                title="Active vs. Inactive by Element Category",
+                labels={"designed_category": "Category", "count": "Elements", "active": "Active"},
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        elif "chromatin_state" in act_df.columns:
             state_counts = (
-                df.groupby(["chromatin_state", "active"])
+                act_df.groupby(["chromatin_state", "active"])
                 .size()
                 .reset_index(name="count")
             )

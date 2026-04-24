@@ -128,8 +128,7 @@ def _load_mapping_table(path: str | Path) -> pd.DataFrame:
         raise ValueError(f"Mapping table is empty: {p}")
     _check_columns(df, MAPPING_TABLE_REQUIRED_COLS, str(p))
     df["n_reads"] = df["n_reads"].astype(int)
-    df["mapq"] = df["mapq"].astype(int)
-    df["md_tag"] = df["md_tag"].astype(str)  # numeric-only MDs (e.g. "84") are read as int
+    df["md"] = df["md"].astype(str)  # numeric-only MDs (e.g. "84") are read as int
     logger.debug("Loaded mapping table: %d rows from %s", len(df), p)
     return df
 
@@ -358,7 +357,7 @@ def _validate_creseq_assumptions(design_manifest: pd.DataFrame) -> list[str]:
 def _parse_errors_for_df(df: pd.DataFrame) -> pd.DataFrame:
     """Vectorise _parse_cigar_errors across a mapping-table DataFrame."""
     parsed = df.apply(
-        lambda r: _parse_cigar_errors(r["cigar"], r["md_tag"]),
+        lambda r: _parse_cigar_errors(r["cigar"], r["md"]),
         axis=1,
         result_type="expand",
     )

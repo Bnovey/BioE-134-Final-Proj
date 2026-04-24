@@ -256,7 +256,7 @@ def tool_library_summary_report(
     return _summary(library_summary_report(
         _path(mapping_table_path, "mapping_table.tsv"),
         _path(plasmid_count_path, "plasmid_counts.tsv"),
-        _path(design_manifest_path, "design_manifest.tsv") if design_manifest_path else None,
+        _path(design_manifest_path, "design_manifest.tsv"),
     ))
 
 
@@ -535,6 +535,82 @@ def tool_interpret_literature_evidence(
             evidence_table_path=evidence_table_path,
         )
     )
+
+
+@mcp.tool()
+def tool_process_dna_counting(
+    fastq_path: str,
+    barcode_len: int = 20,
+    barcode_end: str = "3prime",
+    max_mismatch: int = 0,
+) -> dict:
+    """
+    Count DNA barcodes from a plasmid-pool FASTQ → overwrites plasmid_counts.tsv.
+
+    Requires mapping_table.tsv from the association step.
+    barcode_end: "3prime" (default) or "5prime".
+    """
+    from creseq_mcp.processing.counting import process_dna_counting
+
+    return process_dna_counting(
+        fastq_path,
+        str(UPLOAD_DIR / "mapping_table.tsv"),
+        UPLOAD_DIR,
+        barcode_len=barcode_len,
+        barcode_end=barcode_end,
+        max_mismatch=max_mismatch,
+    )
+
+
+@mcp.tool()
+def tool_process_rna_counting(
+    fastq_paths: list[str],
+    rep_names: list[str] | None = None,
+    barcode_len: int = 20,
+    barcode_end: str = "3prime",
+    max_mismatch: int = 0,
+) -> dict:
+    """
+    Count RNA barcodes across one or more replicate FASTQs → writes rna_counts.tsv.
+
+    Requires mapping_table.tsv from the association step.
+    fastq_paths: list of FASTQ paths, one per replicate.
+    rep_names: optional list of replicate labels (default: rep1, rep2, …).
+    """
+    from creseq_mcp.processing.counting import process_rna_counting
+
+    return process_rna_counting(
+        fastq_paths,
+        str(UPLOAD_DIR / "mapping_table.tsv"),
+        UPLOAD_DIR,
+        rep_names=rep_names,
+        barcode_len=barcode_len,
+        barcode_end=barcode_end,
+        max_mismatch=max_mismatch,
+    )
+
+
+@mcp.tool()
+def tool_activity_report(
+    dna_counts_path: str | None = None,
+    rna_counts_path: str | None = None,
+    design_manifest_path: str | None = None,
+) -> dict:
+    """
+    Normalize DNA/RNA counts → compute log2(RNA/DNA) per oligo → call active CREs.
+
+    Saves activity_results.tsv to the upload directory.
+    Uses z-test vs. negative controls when available; falls back to log2 > 1 threshold.
+    """
+    from creseq_mcp.qc.activity import activity_report
+
+    _, summary = activity_report(
+        _path(dna_counts_path, "plasmid_counts.tsv"),
+        _path(rna_counts_path, "rna_counts.tsv"),
+        _path(design_manifest_path, "design_manifest.tsv") if design_manifest_path else None,
+        upload_dir=UPLOAD_DIR,
+    )
+    return summary
 
 
 if __name__ == "__main__":

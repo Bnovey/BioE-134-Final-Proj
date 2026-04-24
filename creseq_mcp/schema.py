@@ -36,7 +36,7 @@ DesignedCategory = Literal[
 # Row-level schemas  (used for column-presence validation on load)
 # ---------------------------------------------------------------------------
 
-MAPPING_TABLE_REQUIRED_COLS = {"barcode", "oligo_id", "n_reads", "cigar", "md_tag", "mapq"}
+MAPPING_TABLE_REQUIRED_COLS = {"barcode", "oligo_id", "n_reads", "cigar", "md"}
 PLASMID_COUNT_REQUIRED_COLS = {"barcode", "oligo_id", "dna_count"}
 DESIGN_MANIFEST_REQUIRED_COLS = {"oligo_id"}
 

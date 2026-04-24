@@ -39,6 +39,17 @@ _SYSTEM_PROMPT = (
 def _p(args: dict, key: str, filename: str) -> str:
     return args.get(key) or str(UPLOAD_DIR / filename)
 
+
+def _activity_report(args: dict) -> tuple:
+    from creseq_mcp.qc.activity import activity_report
+    _, summary = activity_report(
+        _p(args, "dna_counts_path", "plasmid_counts.tsv"),
+        _p(args, "rna_counts_path", "rna_counts.tsv"),
+        _p(args, "design_manifest_path", "design_manifest.tsv") if args.get("design_manifest_path") else None,
+        upload_dir=UPLOAD_DIR,
+    )
+    return ({}, summary)
+
 _TOOLS: list[dict] = [
     {
         "name": "tool_barcode_complexity",
@@ -188,6 +199,23 @@ _TOOLS: list[dict] = [
             "required": [],
         },
     },
+    {
+        "name": "tool_activity_report",
+        "description": (
+            "Normalize DNA/RNA counts → compute log2(RNA/DNA) per oligo → call active CREs. "
+            "Saves activity_results.tsv. Uses z-test vs. negative controls when available; "
+            "falls back to log2 > 1 threshold. Requires plasmid_counts.tsv and rna_counts.tsv."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dna_counts_path": {"type": "string", "description": "Path to plasmid_counts.tsv (optional)"},
+                "rna_counts_path": {"type": "string", "description": "Path to rna_counts.tsv (optional)"},
+                "design_manifest_path": {"type": "string", "description": "Path to design_manifest.tsv (optional)"},
+            },
+            "required": [],
+        },
+    },
 ]
 
 _DISPATCH: dict[str, Any] = {
@@ -228,8 +256,9 @@ _DISPATCH: dict[str, Any] = {
     "tool_library_summary_report": lambda a: library_summary_report(
         _p(a, "mapping_table_path", "mapping_table.tsv"),
         _p(a, "plasmid_count_path", "plasmid_counts.tsv"),
-        _p(a, "design_manifest_path", "design_manifest.tsv") if a.get("design_manifest_path") else None,
+        _p(a, "design_manifest_path", "design_manifest.tsv"),
     ),
+    "tool_activity_report": lambda a: _activity_report(a),
 }
 
 
