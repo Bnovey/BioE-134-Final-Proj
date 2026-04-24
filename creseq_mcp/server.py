@@ -3,11 +3,6 @@ creseq_mcp/server.py
 ====================
 MCP server entry point for the CRE-seq analysis toolkit.
 
-Registration pattern: decorator-based using ``mcp.server.fastmcp.FastMCP``.
-Each public tool in qc/library.py is wrapped here to convert the
-``(pd.DataFrame, dict)`` return value to a JSON-serialisable dict before
-sending it over the MCP wire.
-
 Run with::
 
     python -m creseq_mcp.server
@@ -19,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -39,41 +34,29 @@ from creseq_mcp.qc.library import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+UPLOAD_DIR = Path.home() / ".creseq" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 mcp = FastMCP(
     "creseq-mcp",
     instructions=(
-        "CRE-seq library and expression QC toolkit. "
-        "Tools operate on barcode→oligo mapping tables and plasmid count tables. "
-        "All thresholds default to CRE-seq conventions (84–200 bp oligos, "
-        "9–11 bp barcodes, episomal delivery). "
+        "CRE-seq library QC toolkit. "
+        "File path arguments are optional — omit them to use data uploaded via the UI. "
         "Do NOT use for lentiMPRA or STARR-seq without adjusting thresholds."
     ),
 )
 
 
-def _serialise(df_summary_pair: tuple | dict) -> dict[str, Any]:
-    """Convert a (DataFrame, dict) tool result to a JSON-safe dict."""
-    import pandas as pd  # local import keeps module-level deps minimal
+def _path(arg: str | None, filename: str) -> str:
+    return arg or str(UPLOAD_DIR / filename)
 
-    if isinstance(df_summary_pair, dict):
-        # library_summary_report returns a nested dict
-        out: dict[str, Any] = {}
-        for k, v in df_summary_pair.items():
-            if isinstance(v, tuple) and len(v) == 2:
-                df, summ = v
-                out[k] = {
-                    "rows": df.to_dict(orient="records") if isinstance(df, pd.DataFrame) else [],
-                    "summary": summ,
-                }
-            else:
-                out[k] = v
-        return out
 
-    df, summary = df_summary_pair
-    return {
-        "rows": df.to_dict(orient="records") if isinstance(df, pd.DataFrame) else [],
-        "summary": summary,
+def _summary(result: tuple | dict) -> dict:
+    """Extract the summary dict, dropping the DataFrame and coercing numpy scalars."""
+    s = result[1] if isinstance(result, tuple) else {
+        k: v[1] if isinstance(v, tuple) else v for k, v in result.items()
     }
+    return json.loads(json.dumps(s, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +66,7 @@ def _serialise(df_summary_pair: tuple | dict) -> dict[str, Any]:
 
 @mcp.tool()
 def tool_barcode_complexity(
-    mapping_table_path: str,
+    mapping_table_path: str | None = None,
     min_reads_per_barcode: int = 1,
 ) -> dict:
     """
@@ -93,13 +76,15 @@ def tool_barcode_complexity(
     fraction are error-free (perfect CIGAR/MD), and the median read depth
     per barcode.  PASS when median barcodes/oligo >= 10.
     """
-    return _serialise(barcode_complexity(mapping_table_path, min_reads_per_barcode))
+    return _summary(barcode_complexity(
+        _path(mapping_table_path, "mapping_table.tsv"), min_reads_per_barcode
+    ))
 
 
 @mcp.tool()
 def tool_oligo_recovery(
-    mapping_table_path: str,
-    design_manifest_path: str,
+    mapping_table_path: str | None = None,
+    design_manifest_path: str | None = None,
     thresholds: list[int] | None = None,
 ) -> dict:
     """
@@ -107,41 +92,48 @@ def tool_oligo_recovery(
 
     PASS when test_element recovery@10 >= 80% AND positive_control recovery@10 >= 95%.
     """
-    return _serialise(oligo_recovery(mapping_table_path, design_manifest_path, thresholds))
+    return _summary(oligo_recovery(
+        _path(mapping_table_path, "mapping_table.tsv"),
+        _path(design_manifest_path, "design_manifest.tsv"),
+        thresholds,
+    ))
 
 
 @mcp.tool()
 def tool_synthesis_error_profile(
-    mapping_table_path: str,
+    mapping_table_path: str | None = None,
     design_manifest_path: str | None = None,
 ) -> dict:
     """
     Per-oligo synthesis error characterisation from CIGAR/MD tags.
 
-    Reports mismatches, indels, soft-clip rates, and (if GC content is available)
-    Spearman correlation between GC content and synthesis fidelity.
-    PASS when median perfect_fraction >= 0.50.
+    Reports mismatches, indels, soft-clip rates, and Spearman correlation
+    between GC content and synthesis fidelity.  PASS when median perfect_fraction >= 0.50.
     """
-    return _serialise(synthesis_error_profile(mapping_table_path, design_manifest_path))
+    return _summary(synthesis_error_profile(
+        _path(mapping_table_path, "mapping_table.tsv"),
+        _path(design_manifest_path, "design_manifest.tsv") if design_manifest_path else None,
+    ))
 
 
 @mcp.tool()
 def tool_barcode_collision_analysis(
-    mapping_table_path: str,
+    mapping_table_path: str | None = None,
     min_read_support: int = 2,
 ) -> dict:
     """
     Barcodes that map to more than one designed oligo.
 
-    PASS when collision rate < 3% (stricter than generic MPRA because CRE-seq
-    uses short 9–11 bp barcodes with limited sequence space).
+    PASS when collision rate < 3%.
     """
-    return _serialise(barcode_collision_analysis(mapping_table_path, min_read_support))
+    return _summary(barcode_collision_analysis(
+        _path(mapping_table_path, "mapping_table.tsv"), min_read_support
+    ))
 
 
 @mcp.tool()
 def tool_barcode_uniformity(
-    plasmid_count_path: str,
+    plasmid_count_path: str | None = None,
     min_barcodes_per_oligo: int = 5,
 ) -> dict:
     """
@@ -149,80 +141,113 @@ def tool_barcode_uniformity(
 
     PASS when median Gini < 0.30.
     """
-    return _serialise(barcode_uniformity(plasmid_count_path, min_barcodes_per_oligo))
+    return _summary(barcode_uniformity(
+        _path(plasmid_count_path, "plasmid_counts.tsv"), min_barcodes_per_oligo
+    ))
 
 
 @mcp.tool()
 def tool_gc_content_bias(
-    mapping_table_path: str,
-    design_manifest_path: str,
+    mapping_table_path: str | None = None,
+    design_manifest_path: str | None = None,
     gc_bins: int = 10,
 ) -> dict:
     """
-    Synthesis recovery and complexity stratified by oligo GC content.
+    Synthesis recovery stratified by oligo GC content.
 
-    Flags GC bins with recovery < 50% of the median bin.  PASS when no such
-    dropout bin is found.  Especially important for CRE-seq enhancer libraries
-    which are often GC-rich (40–70%).
+    Flags GC bins with recovery < 50% of the median bin.  PASS when no dropout bins found.
     """
-    return _serialise(gc_content_bias(mapping_table_path, design_manifest_path, gc_bins))
+    return _summary(gc_content_bias(
+        _path(mapping_table_path, "mapping_table.tsv"),
+        _path(design_manifest_path, "design_manifest.tsv"),
+        gc_bins,
+    ))
 
 
 @mcp.tool()
 def tool_oligo_length_qc(
-    mapping_table_path: str,
-    design_manifest_path: str,
+    mapping_table_path: str | None = None,
+    design_manifest_path: str | None = None,
 ) -> dict:
     """
-    Synthesis-truncation check for fixed-length CRE-seq oligos.
+    Synthesis-truncation check comparing observed alignment length to designed length.
 
-    Compares observed alignment length (from CIGAR) against designed length.
-    PASS when median fraction_full_length >= 0.80.  Warns if the design manifest
-    contains oligos of multiple lengths (atypical for CRE-seq).
+    PASS when median fraction_full_length >= 0.80.
     """
-    return _serialise(oligo_length_qc(mapping_table_path, design_manifest_path))
+    return _summary(oligo_length_qc(
+        _path(mapping_table_path, "mapping_table.tsv"),
+        _path(design_manifest_path, "design_manifest.tsv"),
+    ))
 
 
 @mcp.tool()
-def tool_plasmid_depth_summary(plasmid_count_path: str) -> dict:
+def tool_plasmid_depth_summary(plasmid_count_path: str | None = None) -> dict:
     """
     Barcode-level read-count statistics in the plasmid DNA library.
 
     PASS when median dna_count >= 10 AND fewer than 10% of barcodes have zero counts.
     """
-    return _serialise(plasmid_depth_summary(plasmid_count_path))
+    return _summary(plasmid_depth_summary(_path(plasmid_count_path, "plasmid_counts.tsv")))
 
 
 @mcp.tool()
 def tool_variant_family_coverage(
-    mapping_table_path: str,
-    design_manifest_path: str,
+    mapping_table_path: str | None = None,
+    design_manifest_path: str | None = None,
 ) -> dict:
     """
     Coverage of CRE-seq variant families (reference + motif knockouts / point mutants).
 
-    PASS when >= 80% of families are fully recovered AND zero families are missing
-    their reference sequence.  A missing reference makes delta-score calculation
-    impossible for that family.
+    PASS when >= 80% of families fully recovered AND zero families missing their reference.
     """
-    return _serialise(variant_family_coverage(mapping_table_path, design_manifest_path))
+    return _summary(variant_family_coverage(
+        _path(mapping_table_path, "mapping_table.tsv"),
+        _path(design_manifest_path, "design_manifest.tsv"),
+    ))
 
 
 @mcp.tool()
 def tool_library_summary_report(
-    mapping_table_path: str,
-    plasmid_count_path: str,
+    mapping_table_path: str | None = None,
+    plasmid_count_path: str | None = None,
     design_manifest_path: str | None = None,
 ) -> dict:
     """
     Comprehensive one-shot CRE-seq library QC report.
 
-    Runs all applicable tools.  Tools requiring a design manifest are skipped if
-    design_manifest_path is not provided.  Returns overall_pass, failed_checks,
-    warnings, and per-tool results.
+    Runs all applicable tools and returns overall_pass, failed_checks, warnings,
+    and per-tool summaries.
     """
-    return _serialise(
-        library_summary_report(mapping_table_path, plasmid_count_path, design_manifest_path)
+    return _summary(library_summary_report(
+        _path(mapping_table_path, "mapping_table.tsv"),
+        _path(plasmid_count_path, "plasmid_counts.tsv"),
+        _path(design_manifest_path, "design_manifest.tsv") if design_manifest_path else None,
+    ))
+
+
+@mcp.tool()
+def tool_process_library(
+    fastq_path: str,
+    reference_path: str,
+    barcode_len: int = 10,
+    barcode_end: str = "3prime",
+    max_mismatch: int = 1,
+) -> dict:
+    """
+    Process a raw CRE-seq plasmid-DNA FASTQ against a barcode reference library.
+
+    Writes mapping_table.tsv, plasmid_counts.tsv, and design_manifest.tsv to the
+    upload directory so all QC tools can run without additional arguments.
+
+    barcode_end: "3prime" (default) or "5prime".
+    """
+    from creseq_mcp.processing.pipeline import process_and_save
+
+    return process_and_save(
+        fastq_path, reference_path, UPLOAD_DIR,
+        barcode_len=barcode_len,
+        barcode_end=barcode_end,
+        max_mismatch=max_mismatch,
     )
 
 

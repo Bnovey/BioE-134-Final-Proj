@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import time
 
 import numpy as np
@@ -11,8 +12,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from agent_stub import query_agent
+from agent_stub import query_agent as stub_query_agent
 from mock_data import get_demo_data
+
+from pathlib import Path
+UPLOAD_DIR = Path.home() / ".creseq" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+try:
+    from agent import ClaudeQCAgent, is_available as _gemini_available
+    _GEMINI_READY = True
+except ImportError:
+    _GEMINI_READY = False
+    _gemini_available = lambda: False
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -41,6 +53,14 @@ if "messages" not in st.session_state:
             "tools": [],
         }
     ]
+if "gemini_agent" not in st.session_state:
+    st.session_state.gemini_agent = None
+if "file_paths" not in st.session_state:
+    st.session_state.file_paths: dict[str, str] = {
+        "mapping_table_path": "",
+        "plasmid_count_path": "",
+        "design_manifest_path": "",
+    }
 
 # ── sidebar nav ───────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -70,73 +90,67 @@ with st.sidebar:
 if page == "📤 Upload":
     st.header("Upload CRE-seq Data")
     st.markdown(
-        "Upload your CRE-seq count table. Accepted formats: **CSV**, **TSV**, or **TXT**. "
-        "Expected columns: `element_id`, `dna_counts`, `rna_counts` (plus optional metadata)."
+        "Upload your **plasmid-DNA FASTQ** and **barcode reference library**. "
+        "The pipeline extracts barcodes, aligns to designed sequences, and prepares "
+        "all QC files automatically."
     )
 
-    uploaded = st.file_uploader(
-        "Choose a file",
-        type=["csv", "tsv", "txt"],
-        label_visibility="collapsed",
-    )
+    col_fq, col_ref = st.columns(2)
+    with col_fq:
+        st.subheader("Plasmid-DNA FASTQ")
+        st.caption(".fastq or .fastq.gz")
+        fastq_file = st.file_uploader("FASTQ", type=["fastq", "gz", "fq"], key="up_fastq")
+    with col_ref:
+        st.subheader("Barcode Reference Library")
+        st.caption("TSV: oligo_id, barcode, sequence, designed_category")
+        ref_file = st.file_uploader("Reference TSV", type=["tsv", "txt", "csv"], key="up_ref")
 
-    if uploaded is not None:
-        sep = "\t" if uploaded.name.endswith((".tsv", ".txt")) else ","
-        try:
-            df_uploaded = pd.read_csv(uploaded, sep=sep)
-            # auto-compute log2_ratio if missing
-            if "log2_ratio" not in df_uploaded.columns:
-                if "rna_counts" in df_uploaded.columns and "dna_counts" in df_uploaded.columns:
-                    df_uploaded["log2_ratio"] = np.log2(
-                        (df_uploaded["rna_counts"] + 1) / (df_uploaded["dna_counts"] + 1)
+    with st.expander("Barcode options"):
+        bc_len = st.number_input("Barcode length (bp)", min_value=6, max_value=20, value=10)
+        bc_end = st.radio("Barcode position in read", ["3prime", "5prime"], horizontal=True)
+        bc_mm = st.number_input("Max mismatches for barcode matching", min_value=0, max_value=2, value=1)
+
+    if fastq_file and ref_file:
+        if st.button("▶ Process library", type="primary", use_container_width=True):
+            from creseq_mcp.processing.pipeline import process_and_save
+
+            fastq_path = UPLOAD_DIR / fastq_file.name
+            ref_path = UPLOAD_DIR / ref_file.name
+            (UPLOAD_DIR / fastq_file.name).write_bytes(fastq_file.read())
+            (UPLOAD_DIR / ref_file.name).write_bytes(ref_file.read())
+
+            with st.spinner("Processing FASTQ… this may take a moment"):
+                try:
+                    stats = process_and_save(
+                        fastq_path, ref_path, UPLOAD_DIR,
+                        barcode_len=int(bc_len),
+                        barcode_end=bc_end,
+                        max_mismatch=int(bc_mm),
                     )
-            if "active" not in df_uploaded.columns and "log2_ratio" in df_uploaded.columns:
-                df_uploaded["active"] = df_uploaded["log2_ratio"] > 1.0
-
-            st.success(f"Loaded **{uploaded.name}** — {len(df_uploaded):,} rows × {len(df_uploaded.columns)} columns")
-            st.dataframe(df_uploaded.head(20), use_container_width=True)
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Elements", f"{len(df_uploaded):,}")
-            col2.metric("Columns", len(df_uploaded.columns))
-            col3.metric(
-                "Active (est.)",
-                f"{df_uploaded['active'].sum():,}" if "active" in df_uploaded.columns else "—",
-            )
-
-            if st.button("✅ Use this file for analysis", type="primary"):
-                st.session_state.data = df_uploaded
-                st.session_state.data_source = uploaded.name
-                st.session_state.analysis_run = False
-                st.success("Data loaded. Click **Run Analysis** below or navigate to Chat / QC & Plots.")
-
-        except Exception as exc:
-            st.error(f"Could not parse file: {exc}")
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Total reads", f"{stats['total_reads']:,}")
+                    col2.metric("Unique barcodes", f"{stats['unique_barcodes']:,}")
+                    col3.metric("Oligos represented", f"{stats['oligos_represented']:,}")
+                    col4.metric("Oligos in reference", f"{stats['oligos_in_reference']:,}")
+                    st.success("Processing complete — QC files are ready. Go to Chat to run QC.")
+                except Exception as exc:
+                    st.error(f"Processing failed: {exc}")
     else:
-        st.info("No file uploaded — using synthetic demo data (300 elements).")
-        st.dataframe(st.session_state.data.head(10), use_container_width=True)
+        st.info("Upload both files above to enable processing.")
 
     st.divider()
-    st.subheader("Run Analysis Pipeline")
-    st.markdown(
-        "Runs the full MCP pipeline: normalization → activity calling → annotation → motif enrichment."
-    )
+    st.subheader("Loaded files")
+    for label, fname in [
+        ("Mapping table", "mapping_table.tsv"),
+        ("Plasmid counts", "plasmid_counts.tsv"),
+        ("Design manifest", "design_manifest.tsv"),
+    ]:
+        p = UPLOAD_DIR / fname
+        if p.exists():
+            st.success(f"**{label}** — {fname} ({p.stat().st_size:,} bytes)")
+        else:
+            st.warning(f"**{label}** — not uploaded")
 
-    if st.button("▶ Run Analysis", type="primary", use_container_width=True):
-        steps = [
-            ("Normalizing counts (log₂ RNA/DNA)…", 0.6),
-            ("Calling active elements vs. negative controls…", 0.8),
-            ("Annotating with chromatin states…", 0.5),
-            ("Running motif enrichment…", 1.0),
-            ("Computing variant effects…", 0.7),
-        ]
-        progress = st.progress(0, text="Starting pipeline…")
-        for i, (msg, delay) in enumerate(steps):
-            progress.progress((i + 1) / len(steps), text=msg)
-            time.sleep(delay)
-        progress.empty()
-        st.session_state.analysis_run = True
-        st.success("Pipeline complete! Navigate to **QC & Plots** or **Results**.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -161,8 +175,15 @@ elif page == "💬 Chat":
 
         with st.chat_message("assistant"):
             with st.spinner("Agent thinking…"):
-                time.sleep(0.4)  # simulate latency
-                response = query_agent(prompt, has_data=True)
+                if _GEMINI_READY and _gemini_available():
+                    if st.session_state.gemini_agent is None:
+                        st.session_state.gemini_agent = ClaudeQCAgent(
+                            os.environ["ANTHROPIC_API_KEY"]
+                        )
+                    response = st.session_state.gemini_agent.send_message(prompt)
+                else:
+                    time.sleep(0.4)
+                    response = stub_query_agent(prompt, has_data=True)
             st.markdown(response.text)
             for tool in response.tools_called:
                 st.info(f"🔧 Tool called: `{tool}`")
@@ -173,6 +194,11 @@ elif page == "💬 Chat":
 
     with st.sidebar:
         st.divider()
+        if _GEMINI_READY and _gemini_available():
+            st.success("Claude connected", icon="✅")
+        else:
+            st.warning("Set ANTHROPIC_API_KEY to enable real QC tools", icon="⚠️")
+        st.divider()
         if st.button("🗑 Clear chat", use_container_width=True):
             st.session_state.messages = [
                 {
@@ -181,6 +207,8 @@ elif page == "💬 Chat":
                     "tools": [],
                 }
             ]
+            if st.session_state.gemini_agent is not None:
+                st.session_state.gemini_agent.reset()
             st.rerun()
 
 
