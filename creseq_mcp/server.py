@@ -337,6 +337,36 @@ def tool_call_active_elements(
     )
 
 
+@mcp.tool(name="call_active_elements")
+def tool_call_active_elements_full(
+    activity_table_path: str,
+    negative_controls: list[str],
+    fdr_threshold: float = 0.05,
+    method: str = "empirical",
+    count_table_path: str | None = None,
+) -> dict:
+    """
+    Classify CRE-seq elements as active vs. inactive against a negative-control
+    null distribution.  Outputs per-element pvalue, BH-corrected FDR, z-score,
+    and fold-over-controls; writes <activity_table>_classified.tsv to disk.
+
+    method='empirical' (default) uses median/MAD on log2 RNA/DNA activities.
+    method='glm' will use a negative-binomial GLM on raw counts (not yet
+    implemented; pass count_table_path when enabled).
+    """
+    from creseq_mcp.activity_calling import call_active_elements as _call
+
+    return _serialise(
+        _call(
+            activity_table_path=activity_table_path,
+            negative_controls=negative_controls,
+            fdr_threshold=fdr_threshold,
+            method=method,
+            count_table_path=count_table_path,
+        )
+    )
+
+
 @mcp.tool()
 def tool_rank_cre_candidates(
     activity_table_path: str,
@@ -611,6 +641,91 @@ def tool_activity_report(
         upload_dir=UPLOAD_DIR,
     )
     return summary
+
+
+@mcp.tool(name="extract_sequences")
+def tool_extract_sequences(
+    classified_table: str,
+    sequence_source: str,
+    active_output: str = "active.fa",
+    background_output: str = "background.fa",
+) -> dict:
+    """
+    Bridge ``call_active_elements`` → ``motif_enrichment``.
+
+    Reads a classified-elements TSV (with ``element_id``, ``active``,
+    ``pvalue`` columns) and a sequence-source TSV (with ``element_id`` +
+    ``sequence``) and writes two FASTAs: actives, and inactive test elements
+    as background.  Negative controls (NaN pvalue) are excluded from both.
+    Returns paths plus per-set counts.
+    """
+    from creseq_mcp.motif import extract_sequences_to_fasta
+
+    return extract_sequences_to_fasta(
+        classified_table=classified_table,
+        sequence_source=sequence_source,
+        active_output=active_output,
+        background_output=background_output,
+    )
+
+
+@mcp.tool()
+def tool_motif_enrichment(
+    active_fasta: str,
+    background_fasta: str,
+    motif_database: str = "JASPAR2024",
+    collection: str = "CORE",
+    tax_group: str = "Vertebrates",
+    score_threshold: float = 0.8,
+    output_path: str | None = None,
+) -> dict:
+    """
+    Test for TF binding motif enrichment in active CRE-seq elements.
+
+    Scans active and background FASTA sequences against JASPAR motif PWMs on
+    both strands and tests each motif for enrichment with one-sided Fisher's
+    exact + BH-FDR.  Returns the enrichment table path and a summary of the
+    top significant motifs.
+    """
+    from creseq_mcp.motif import motif_enrichment
+
+    return motif_enrichment(
+        active_fasta=active_fasta,
+        background_fasta=background_fasta,
+        motif_database=motif_database,
+        collection=collection,
+        tax_group=tax_group,
+        score_threshold=score_threshold,
+        output_path=output_path,
+    )
+
+
+@mcp.tool()
+def tool_plot_creseq(
+    data_file: str,
+    plot_type: str,
+    output_path: str = "plot.png",
+    highlight_ids: list[str] | None = None,
+    neg_control_ids: list[str] | None = None,
+    annotation_file: str | None = None,
+) -> dict:
+    """
+    Generate a publication-quality CRE-seq plot.
+
+    plot_type ∈ {volcano, ranked_activity, replicate_correlation,
+    annotation_boxplot, motif_dotplot}.  Returns the path to the saved
+    figure plus a natural-language description of what it shows.
+    """
+    from creseq_mcp.plotting import plot_creseq
+
+    return plot_creseq(
+        data_file=data_file,
+        plot_type=plot_type,
+        output_path=output_path,
+        highlight_ids=highlight_ids,
+        neg_control_ids=neg_control_ids,
+        annotation_file=annotation_file,
+    )
 
 
 if __name__ == "__main__":

@@ -686,6 +686,7 @@ def synthesis_error_profile(
 def barcode_collision_analysis(
     mapping_table_path: str | Path,
     min_read_support: int = 2,
+    collision_threshold: float = 0.01,
 ) -> tuple[pd.DataFrame, dict]:
     """
     Question answered:
@@ -693,9 +694,13 @@ def barcode_collision_analysis(
         and which oligos are most affected?
 
     Inputs:
-        mapping_table_path : path to barcode→oligo mapping TSV
-        min_read_support   : minimum n_reads for a barcode to be considered a
-                             real mapping (default 2 to remove singleton noise)
+        mapping_table_path  : path to barcode→oligo mapping TSV
+        min_read_support    : minimum n_reads for a barcode to be considered a
+                              real mapping (default 2 to remove singleton noise)
+        collision_threshold : pass/fail collision-rate cutoff (default 0.01).
+                              Set higher (e.g. 0.03) for libraries with shorter
+                              barcodes where birthday-paradox collisions are
+                              expected.
 
     Outputs:
         DataFrame — one row per barcode that collides:
@@ -703,19 +708,19 @@ def barcode_collision_analysis(
         summary dict — n_barcodes_total, n_collisions, collision_rate, warnings, pass
 
     Pass/fail criteria:
-        PASS  iff  collision_rate < 0.03
+        PASS  iff  collision_rate < collision_threshold
 
     CRE-seq-specific notes:
         - 9–11 bp barcodes have only 4M–4B possible sequences.  For libraries of
           10⁵ elements × 25 barcodes/oligo = 2.5M total barcodes, birthday-paradox
-          collisions are non-trivial.  The 3% ceiling is stricter than the 5% used
-          for longer-barcode MPRA protocols.
+          collisions are non-trivial.
         - Collisions can arise from both true birthday-paradox coincidences and
           from chimeric PCR products during library preparation.
     """
     params = BarcodeCollisionInput(
         mapping_table_path=str(mapping_table_path),
         min_read_support=min_read_support,
+        collision_threshold=collision_threshold,
     )
 
     df = _load_mapping_table(params.mapping_table_path)
@@ -739,18 +744,19 @@ def barcode_collision_analysis(
     collision_rate = n_collisions / n_total if n_total else 0.0
 
     warn_msgs: list[str] = []
-    if collision_rate >= 0.03:
+    if collision_rate >= params.collision_threshold:
         warn_msgs.append(
-            f"Collision rate {collision_rate:.1%} >= 3% CRE-seq threshold. "
-            f"Consider lengthening barcodes or reducing library complexity."
+            f"Collision rate {collision_rate:.1%} >= {params.collision_threshold:.1%} "
+            f"threshold. Consider lengthening barcodes or reducing library complexity."
         )
 
     summary: dict[str, Any] = {
         "n_barcodes_total": int(n_total),
         "n_collisions": int(n_collisions),
         "collision_rate": float(collision_rate),
+        "collision_threshold": float(params.collision_threshold),
         "warnings": warn_msgs,
-        "pass": collision_rate < 0.03,
+        "pass": collision_rate < params.collision_threshold,
     }
     return collisions, summary
 
@@ -1152,6 +1158,19 @@ def plasmid_depth_summary(
 # ---------------------------------------------------------------------------
 
 
+def _coerce_is_reference(s: pd.Series) -> pd.Series:
+    """
+    Parse the is_reference column robustly.  The CSV round-trip can serialize
+    Python booleans as the strings "True"/"False" (or lowercase) — both must
+    map to real bools, with anything else → False.
+    """
+    if s.dtype == bool:
+        return s
+    return s.astype(str).str.strip().str.lower().map(
+        {"true": True, "false": False, "1": True, "0": False}
+    ).fillna(False).astype(bool)
+
+
 def variant_family_coverage(
     mapping_table_path: str | Path,
     design_manifest_path: str | Path,
@@ -1164,13 +1183,14 @@ def variant_family_coverage(
 
     Inputs:
         mapping_table_path   : path to barcode→oligo mapping TSV
-        design_manifest_path : path to design manifest with parent_element_id column
+        design_manifest_path : path to design manifest with variant_family +
+                               is_reference columns
 
     Outputs:
-        DataFrame — one row per family (keyed by parent_element_id):
-            parent_element_id, n_variants_designed, n_variants_recovered,
-            reference_recovered (bool), family_complete (bool),
-            missing_variants (list, stored as str)
+        DataFrame — one row per family (keyed by variant_family):
+            variant_family, reference_oligo_id, n_variants_designed,
+            n_variants_recovered, reference_recovered (bool),
+            family_complete (bool), missing_variants (str-encoded list)
         summary dict — n_families, fraction_families_complete,
             fraction_families_reference_missing, warnings, pass
 
@@ -1182,8 +1202,8 @@ def variant_family_coverage(
         - Losing the reference sequence while retaining its knockouts makes
           delta-score (variant effect) calculation impossible for that family.
           This is a hard failure because there is no analysis-side rescue.
-        - parent_element_id is null for top-level reference sequences.  Variants
-          point to their reference via parent_element_id = reference oligo_id.
+        - Families are grouped by the variant_family column; the reference
+          oligo within each family is the row with is_reference == True.
     """
     params = VariantFamilyCoverageInput(
         mapping_table_path=str(mapping_table_path),
@@ -1193,14 +1213,20 @@ def variant_family_coverage(
     mapping = _load_mapping_table(params.mapping_table_path)
     manifest = _load_design_manifest(params.design_manifest_path)
 
-    if (
-        "parent_element_id" not in manifest.columns
-        or manifest["parent_element_id"].isna().all()
-    ):
-        logger.info("No parent_element_id links found — no variant families to evaluate.")
+    needed = {"variant_family", "is_reference"}
+    missing_cols = needed - set(manifest.columns)
+    if missing_cols:
+        raise ValueError(
+            f"design_manifest missing required columns for variant family analysis: "
+            f"{missing_cols}. Expected variant_family + is_reference."
+        )
+
+    if manifest["variant_family"].isna().all():
+        logger.info("No variant_family values found — no families to evaluate.")
         empty = pd.DataFrame(
             columns=[
-                "parent_element_id",
+                "variant_family",
+                "reference_oligo_id",
                 "n_variants_designed",
                 "n_variants_recovered",
                 "reference_recovered",
@@ -1216,28 +1242,30 @@ def variant_family_coverage(
             "pass": True,
         }
 
+    manifest = manifest.copy()
+    manifest["is_reference"] = _coerce_is_reference(manifest["is_reference"])
     recovered_oligos: set[str] = set(mapping["oligo_id"].unique())
 
-    # Variants: rows with non-null parent_element_id
-    variants = manifest[manifest["parent_element_id"].notna()].copy()
-    family_ids = variants["parent_element_id"].unique()
+    families = manifest[manifest["variant_family"].notna()]
+    family_ids = families["variant_family"].unique()
 
     rows = []
-    for parent_id in family_ids:
-        fam_variants = variants[variants["parent_element_id"] == parent_id]
-        variant_ids = list(fam_variants["oligo_id"].unique())
+    for fam_id in family_ids:
+        fam_df = families[families["variant_family"] == fam_id]
+        ref_rows = fam_df[fam_df["is_reference"]]
+        ref_id = str(ref_rows["oligo_id"].iloc[0]) if len(ref_rows) else None
 
-        n_designed = len(variant_ids)
-        recovered_variants = [v for v in variant_ids if v in recovered_oligos]
-        missing = [v for v in variant_ids if v not in recovered_oligos]
-
-        ref_recovered = parent_id in recovered_oligos
-        n_recovered = len(recovered_variants)
-        family_complete = ref_recovered and len(missing) == 0
+        member_ids = list(fam_df["oligo_id"].unique())
+        n_designed = len(member_ids)
+        missing = [v for v in member_ids if v not in recovered_oligos]
+        n_recovered = n_designed - len(missing)
+        ref_recovered = (ref_id is not None) and (ref_id in recovered_oligos)
+        family_complete = (ref_id is not None) and ref_recovered and len(missing) == 0
 
         rows.append(
             {
-                "parent_element_id": parent_id,
+                "variant_family": fam_id,
+                "reference_oligo_id": ref_id,
                 "n_variants_designed": n_designed,
                 "n_variants_recovered": n_recovered,
                 "reference_recovered": ref_recovered,

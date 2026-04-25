@@ -95,6 +95,7 @@ class SynthesisErrorProfileInput(BaseModel):
 class BarcodeCollisionInput(BaseModel):
     mapping_table_path: str
     min_read_support: int = Field(default=2, ge=1)
+    collision_threshold: float = Field(default=0.01, ge=0.0, le=1.0)
 
 
 class BarcodeUniformityInput(BaseModel):

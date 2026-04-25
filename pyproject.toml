@@ -13,6 +13,16 @@ dependencies = [
     "numpy>=1.26",
     "pydantic>=2.0",
     "scipy>=1.11",
+    "statsmodels>=0.14",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "pyjaspar>=4.0.0",
+    "biopython>=1.80",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (real JASPAR data, end-to-end). Deselect with '-m \"not slow\"'.",
 ]
 
 [project.optional-dependencies]
