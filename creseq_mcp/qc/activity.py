@@ -14,6 +14,7 @@ Steps
 from __future__ import annotations
 
 import logging
+import re
 from math import erfc, sqrt
 from pathlib import Path
 
@@ -152,6 +153,43 @@ def call_activity(
     }
 
 
+_LOCUS_RE = re.compile(r"\[([^\]]+)\]")
+
+
+def _add_variant_cols(manifest: pd.DataFrame) -> pd.DataFrame:
+    """
+    Derive variant_family and is_reference from oligo_id when those columns
+    are absent.  Handles the lentiMPRA naming convention:
+      R:<TF>_<coords>_[<locus>]  →  reference allele, family = <locus>
+      A:<TF>_<coords>_[<locus>]  →  alternate allele, family = <locus>
+      C:<TF>_<coords>_[<locus>]  →  control allele,   family = <locus>
+      seq#####                   →  no variant family (NaN)
+    Falls back to designed_category == "reference" when prefix is ambiguous.
+    """
+    manifest = manifest.copy()
+
+    def _family(oid: str) -> str | None:
+        m = _LOCUS_RE.search(oid)
+        return m.group(1) if m else None
+
+    def _is_ref(row) -> bool | None:
+        oid = str(row.get("oligo_id", ""))
+        if oid.startswith("R:"):
+            return True
+        if oid.startswith("A:") or oid.startswith("C:"):
+            return False
+        cat = str(row.get("designed_category", ""))
+        if cat == "reference":
+            return True
+        if cat in ("alternate", "control"):
+            return False
+        return None
+
+    manifest["variant_family"] = manifest["oligo_id"].apply(_family)
+    manifest["is_reference"] = manifest.apply(_is_ref, axis=1)
+    return manifest
+
+
 def compute_variant_delta_scores(
     activity_results_path: str | Path,
     design_manifest_path: str | Path,
@@ -161,13 +199,16 @@ def compute_variant_delta_scores(
     For each variant family, compute delta = mutant_log2_ratio − reference_log2_ratio.
     Tests significance via z-test across all deltas (BH FDR).
     Saves variant_delta_scores.tsv when upload_dir is provided.
+
+    If the manifest lacks variant_family / is_reference columns they are
+    automatically derived from the oligo_id using the R:/A:/C: prefix
+    convention used by lentiMPRA design tables.
     """
     results = pd.read_csv(activity_results_path, sep="\t")
     manifest = pd.read_csv(design_manifest_path, sep="\t")
 
-    needed = {"oligo_id", "variant_family", "is_reference"}
-    if not needed.issubset(manifest.columns):
-        raise ValueError(f"design_manifest missing columns: {needed - set(manifest.columns)}")
+    if not {"variant_family", "is_reference"}.issubset(manifest.columns):
+        manifest = _add_variant_cols(manifest)
 
     df = results.merge(
         manifest[["oligo_id", "variant_family", "is_reference"]],
