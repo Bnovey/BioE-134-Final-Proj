@@ -89,33 +89,58 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 if page == "📤 Upload":
     from creseq_mcp.processing import mpraflow as _mpraflow
-    _use_mpraflow = False  # TEMP: force built-in pipeline for testing
+    _use_mpraflow = _mpraflow.is_available()
 
     st.header("Upload CRE-seq Data")
     st.caption("Enter local file paths — no upload needed since the app runs on your machine.")
 
+    if _use_mpraflow:
+        st.success("MPRAflow detected — association step will use full Nextflow pipeline.", icon="✅")
+    else:
+        st.warning("Nextflow not found — association will use built-in barcode matcher.", icon="⚠️")
+
     # ── File path inputs ─────────────────────────────────────────────────────
+    st.subheader("Association (barcode → oligo mapping)")
     col1, col2 = st.columns(2)
     with col1:
-        assoc_path_str = st.text_input(
-            "Association FASTQ (barcode read)",
-            placeholder="~/Downloads/Association/ENCFF853TAM.fastq.gz",
-            help="R2 from your association sequencing run — contains the random barcodes.",
-        )
-        dna_path_str = st.text_input(
-            "DNA Counting FASTQ",
-            placeholder="~/Downloads/DNA Reps/ENCFF062NLF.fastq.gz",
-            help="Sequencing run from your plasmid pool (separate from association).",
+        assoc_r1_str = st.text_input(
+            "Association R1 (oligo reads)",
+            placeholder="~/Desktop/creseq_test_data/assoc_R1.fastq.gz",
+            help="R1 from paired-end association sequencing — contains the oligo sequence.",
         )
     with col2:
+        assoc_r2_str = st.text_input(
+            "Association R2 (barcode reads)",
+            placeholder="~/Desktop/creseq_test_data/assoc_R2.fastq.gz",
+            help="R2 from paired-end association sequencing — contains the random barcode.",
+        )
+
+    col3, col4 = st.columns(2)
+    with col3:
+        design_fasta_str = st.text_input(
+            "Design FASTA",
+            placeholder="~/Downloads/pilot_hepg2_elements.fa",
+            help="FASTA of all designed oligo sequences — used by MPRAflow for alignment.",
+        )
+    with col4:
         ref_path_str = st.text_input(
             "Barcode Reference TSV",
             placeholder="~/Downloads/reference_library.tsv",
-            help="TSV with columns: oligo_id, barcode, sequence, designed_category",
+            help="TSV with oligo_id, barcode, sequence, designed_category — for manifest and fallback matching.",
         )
+
+    st.subheader("Counting")
+    col5, col6 = st.columns(2)
+    with col5:
+        dna_path_str = st.text_input(
+            "DNA Counting FASTQ",
+            placeholder="~/Desktop/creseq_test_data/dna_rep1.fastq.gz",
+            help="Pure barcode reads from your plasmid pool.",
+        )
+    with col6:
         rna_paths_str = st.text_input(
-            "RNA FASTQs (comma-separated paths)",
-            placeholder="~/Downloads/RNA_Counting/ENCFF388KGK.fastq.gz, ~/Downloads/RNA_Counting/ENCFF184MJL.fastq.gz.1",
+            "RNA FASTQs (comma-separated)",
+            placeholder="~/Desktop/creseq_test_data/rna_rep1.fastq.gz, ~/Desktop/creseq_test_data/rna_rep2.fastq.gz",
             help="One path per replicate, separated by commas.",
         )
 
@@ -133,14 +158,17 @@ if page == "📤 Upload":
         p = Path(s).expanduser()
         return p if p.exists() else None
 
-    assoc_path = _resolve(assoc_path_str)
-    ref_path   = _resolve(ref_path_str)
-    dna_path   = _resolve(dna_path_str)
-    rna_paths  = [p for s in rna_paths_str.split(",") if (p := _resolve(s)) is not None] if rna_paths_str.strip() else []
+    assoc_r1_path   = _resolve(assoc_r1_str)
+    assoc_r2_path   = _resolve(assoc_r2_str)
+    design_fasta    = _resolve(design_fasta_str)
+    ref_path        = _resolve(ref_path_str)
+    dna_path        = _resolve(dna_path_str)
+    rna_paths       = [p for s in rna_paths_str.split(",") if (p := _resolve(s)) is not None] if rna_paths_str.strip() else []
 
-    # Show validation feedback
     for label, val, raw in [
-        ("Association FASTQ", assoc_path, assoc_path_str),
+        ("Association R1", assoc_r1_path, assoc_r1_str),
+        ("Association R2", assoc_r2_path, assoc_r2_str),
+        ("Design FASTA", design_fasta, design_fasta_str),
         ("Reference TSV", ref_path, ref_path_str),
         ("DNA FASTQ", dna_path, dna_path_str),
     ]:
@@ -149,31 +177,44 @@ if page == "📤 Upload":
 
     if rna_paths_str.strip():
         for s in rna_paths_str.split(","):
-            p = _resolve(s)
-            if not p:
+            if not _resolve(s):
                 st.error(f"RNA FASTQ not found: {s.strip()}")
 
     # ── Process button ───────────────────────────────────────────────────────
-    ready = assoc_path and ref_path and dna_path and len(rna_paths) > 0
+    ready = assoc_r1_path and assoc_r2_path and ref_path and dna_path and len(rna_paths) > 0
+    if _use_mpraflow and not design_fasta:
+        ready = False
     if not ready:
         missing = [n for n, v in [
-            ("Association FASTQ", assoc_path), ("Reference TSV", ref_path),
-            ("DNA FASTQ", dna_path), ("RNA FASTQs", rna_paths or None),
+            ("Association R1", assoc_r1_path), ("Association R2", assoc_r2_path),
+            ("Design FASTA (required for MPRAflow)", design_fasta if _use_mpraflow else True),
+            ("Reference TSV", ref_path), ("DNA FASTQ", dna_path),
+            ("RNA FASTQs", rna_paths or None),
         ] if not v]
         if missing:
             st.info(f"Still needed: {', '.join(missing)}")
 
     if st.button("▶ Process all files", type="primary", use_container_width=True, disabled=not ready):
-        from creseq_mcp.processing.pipeline import process_and_save
         from creseq_mcp.processing.counting import process_dna_counting, process_rna_counting
         from creseq_mcp.qc.activity import activity_report
 
         progress = st.progress(0, text="Step 1/4 — Association…")
         try:
-            assoc_stats = process_and_save(
-                assoc_path, ref_path, UPLOAD_DIR,
-                barcode_len=int(bc_len), barcode_end=bc_end, max_mismatch=int(bc_mm),
-            )
+            if _use_mpraflow:
+                from creseq_mcp.processing.mpraflow import process_and_save as mpra_process
+                assoc_stats = mpra_process(
+                    fastq_bc=assoc_r2_path,
+                    fastq_oligo=assoc_r1_path,
+                    design_fasta=design_fasta,
+                    reference_path=ref_path,
+                    upload_dir=UPLOAD_DIR,
+                )
+            else:
+                from creseq_mcp.processing.pipeline import process_and_save as builtin_process
+                assoc_stats = builtin_process(
+                    assoc_r2_path, ref_path, UPLOAD_DIR,
+                    barcode_len=int(bc_len), barcode_end=bc_end, max_mismatch=int(bc_mm),
+                )
             progress.progress(25, text="Step 2/4 — DNA counting…")
 
             dna_stats = process_dna_counting(

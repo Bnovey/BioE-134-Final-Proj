@@ -29,8 +29,17 @@ _ID_COLS = ("name", "oligo_id", "oligo", "element")
 _COUNT_COLS = ("n", "count", "reads", "read_count")
 
 
+def _nextflow_bin() -> str | None:
+    """Return path to nextflow binary, checking ~/bin if not on PATH."""
+    found = shutil.which("nextflow")
+    if found:
+        return found
+    local = Path.home() / "bin" / "nextflow"
+    return str(local) if local.exists() else None
+
+
 def is_available() -> bool:
-    return shutil.which("nextflow") is not None
+    return _nextflow_bin() is not None
 
 
 def _find_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
@@ -68,7 +77,7 @@ def run_mpraflow(
     outdir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "nextflow", "run", "kircherlab/MPRAflow",
+        _nextflow_bin(), "run", "kircherlab/MPRAflow",
         "-entry", "ASSOCIATION",
         "--name", name,
         "--fastq_bc", str(fastq_bc),
