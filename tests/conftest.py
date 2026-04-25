@@ -62,7 +62,14 @@ def _mismatch_cigar_md(oligo_len: int, rng: np.random.Generator):
 
 @pytest.fixture(scope="session")
 def design_manifest_df() -> pd.DataFrame:
-    """500-oligo design manifest with categories and variant-family links."""
+    """
+    500-oligo design manifest with categories and variant-family links.
+
+    Variant families (one reference test_element + one motif_knockout sibling)
+    are encoded with `variant_family` + `is_reference`.  The first N_KNOCKOUT
+    test elements double as references; each is paired with one knockout in the
+    motif_knockout block.
+    """
     rng = _rng(44)
     test_ids = OLIGO_IDS[:N_TEST]
     scrambled_ids = OLIGO_IDS[N_TEST : N_TEST + N_SCRAMBLED]
@@ -70,27 +77,31 @@ def design_manifest_df() -> pd.DataFrame:
     pos_ids = OLIGO_IDS[N_TEST + N_SCRAMBLED + N_KNOCKOUT : N_TEST + N_SCRAMBLED + N_KNOCKOUT + N_POS_CTRL]
     neg_ids = OLIGO_IDS[N_TEST + N_SCRAMBLED + N_KNOCKOUT + N_POS_CTRL :]
 
-    # Each knockout maps to the first N_KNOCKOUT test elements
-    parent_map = {ko: test_ids[i] for i, ko in enumerate(knockout_ids)}
+    # Each knockout shares a variant_family with one of the first N_KNOCKOUT
+    # test elements (the family's reference).
+    family_for_knockout = {ko: f"FAM{i:03d}" for i, ko in enumerate(knockout_ids)}
+    family_for_ref = {test_ids[i]: f"FAM{i:03d}" for i in range(N_KNOCKOUT)}
 
     rows = []
     for oligo_id in OLIGO_IDS:
         seq = _rand_seq(OLIGO_LEN, rng)
+        family = None
+        is_ref = False
         if oligo_id in test_ids:
             cat = "test_element"
-            parent = None
+            if oligo_id in family_for_ref:
+                family = family_for_ref[oligo_id]
+                is_ref = True
         elif oligo_id in scrambled_ids:
             cat = "scrambled_control"
-            parent = None
         elif oligo_id in knockout_ids:
             cat = "motif_knockout"
-            parent = parent_map[oligo_id]
+            family = family_for_knockout[oligo_id]
+            is_ref = False
         elif oligo_id in pos_ids:
             cat = "positive_control"
-            parent = None
         else:
             cat = "negative_control"
-            parent = None
 
         rows.append(
             {
@@ -99,7 +110,8 @@ def design_manifest_df() -> pd.DataFrame:
                 "length": OLIGO_LEN,
                 "gc_content": _gc(seq),
                 "designed_category": cat,
-                "parent_element_id": parent,
+                "variant_family": family,
+                "is_reference": is_ref,
             }
         )
 
@@ -228,12 +240,15 @@ def missing_ref_mapping_path(tmp_path_factory, design_manifest_df) -> str:
     but their knockouts are present.
     """
     rng = _rng(52)
-    knockouts = design_manifest_df[design_manifest_df["designed_category"] == "motif_knockout"]
-    parent_ids = set(knockouts["parent_element_id"].dropna().unique())
+    refs = design_manifest_df[
+        (design_manifest_df["variant_family"].notna())
+        & (design_manifest_df["is_reference"] == True)  # noqa: E712
+    ]
+    ref_ids = set(refs["oligo_id"].unique())
 
     rows = []
     for oligo_id in OLIGO_IDS:
-        if oligo_id in parent_ids:
+        if oligo_id in ref_ids:
             continue  # drop all reference oligos → families lack their reference
         for _ in range(15):
             bc = _rand_seq(BC_LEN, rng)
@@ -286,3 +301,219 @@ def empty_mapping_path(tmp_path_factory) -> str:
         columns=["barcode", "oligo_id", "n_reads", "cigar", "md"]
     ).to_csv(p, sep="\t", index=False)
     return str(p)
+
+
+# ---------------------------------------------------------------------------
+# Plotting fixtures (used by tests/test_plotting.py)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def classified_fixture() -> pd.DataFrame:
+    """
+    100-element classified table mimicking the output of
+    ``call_active_elements_empirical``: 20 controls (NaN p/fdr/zscore),
+    30 active (small p, large fold), 50 inactive.
+    """
+    rng = np.random.default_rng(42)
+    rows: list[dict] = []
+    for i in range(20):
+        rows.append({
+            "element_id": f"neg_ctrl_{i:03d}",
+            "mean_activity": float(rng.normal(0, 0.3)),
+            "std_activity": 0.3,
+            "n_barcodes": 15,
+            "active": False,
+            "pvalue": np.nan,
+            "fdr": np.nan,
+            "fold_over_controls": np.nan,
+            "zscore": np.nan,
+        })
+    for i in range(30):
+        act = float(rng.normal(2.0, 0.5))
+        rows.append({
+            "element_id": f"active_{i:03d}",
+            "mean_activity": act,
+            "std_activity": 0.4,
+            "n_barcodes": 15,
+            "active": True,
+            "pvalue": float(rng.uniform(1e-10, 1e-3)),
+            "fdr": float(rng.uniform(1e-8, 0.04)),
+            "fold_over_controls": 2 ** act,
+            "zscore": act / 0.3,
+        })
+    for i in range(50):
+        act = float(rng.normal(0.1, 0.3))
+        rows.append({
+            "element_id": f"inactive_{i:03d}",
+            "mean_activity": act,
+            "std_activity": 0.3,
+            "n_barcodes": 15,
+            "active": False,
+            "pvalue": float(rng.uniform(0.1, 1.0)),
+            "fdr": float(rng.uniform(0.2, 1.0)),
+            "fold_over_controls": 2 ** act,
+            "zscore": act / 0.3,
+        })
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture
+def activity_with_reps_fixture() -> pd.DataFrame:
+    """100 elements with rep1/rep2/rep3_activity columns (correlated)."""
+    rng = np.random.default_rng(42)
+    n = 100
+    base = rng.normal(0.5, 1.5, n)
+    rows = []
+    for i in range(n):
+        rows.append({
+            "element_id": f"elem_{i:03d}",
+            "mean_activity": float(base[i]),
+            "std_activity": 0.3,
+            "n_barcodes": 15,
+            "rep1_activity": float(base[i] + rng.normal(0, 0.2)),
+            "rep2_activity": float(base[i] + rng.normal(0, 0.2)),
+            "rep3_activity": float(base[i] + rng.normal(0, 0.25)),
+        })
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture
+def annotation_fixture(tmp_path) -> Path:
+    """TSV mapping element IDs to annotation categories."""
+    categories = ["enhancer", "promoter", "CTCF", "heterochromatin"]
+    lines: list[str] = []
+    for i in range(30):
+        lines.append(f"active_{i:03d}\tenhancer")
+    for i in range(50):
+        cat = categories[i % len(categories)]
+        lines.append(f"inactive_{i:03d}\t{cat}")
+    p = tmp_path / "annotations.tsv"
+    p.write_text("element_id\tannotation\n" + "\n".join(lines) + "\n")
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Motif-enrichment fixtures (used by tests/test_motif.py)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_motif(matrix_id: str, name: str, counts: dict) -> object:
+    """Build a JASPAR-Motif-shaped mock with .matrix_id, .name, .counts."""
+    return type(
+        "MockMotif",
+        (),
+        {"matrix_id": matrix_id, "name": name, "counts": counts},
+    )()
+
+
+@pytest.fixture
+def small_motif_list() -> list:
+    """
+    3 hand-built motifs for fast unit tests, matching the pyjaspar interface
+    (.matrix_id, .name, .counts).  Avoids loading all ~880 JASPAR motifs.
+    """
+    gata = _make_mock_motif(
+        "MA0035.1", "GATA1",
+        {
+            "A": [10, 0, 10, 0, 10, 10, 0, 0],
+            "C": [0, 0, 0, 0, 0, 0, 0, 0],
+            "G": [0, 10, 0, 0, 0, 0, 10, 10],
+            "T": [0, 0, 0, 10, 0, 0, 0, 0],
+        },
+    )
+    sp1 = _make_mock_motif(
+        "MA0079.1", "SP1",
+        {
+            "A": [0, 0, 0, 0, 0, 0],
+            "C": [0, 0, 0, 5, 5, 5],
+            "G": [10, 10, 10, 5, 5, 5],
+            "T": [0, 0, 0, 0, 0, 0],
+        },
+    )
+    rand = _make_mock_motif(
+        "RAND01", "RandomControl",
+        {
+            "A": [3, 3, 3, 3, 3, 3],
+            "C": [3, 3, 3, 3, 3, 3],
+            "G": [3, 3, 3, 3, 3, 3],
+            "T": [3, 3, 3, 3, 3, 3],
+        },
+    )
+    return [gata, sp1, rand]
+
+
+@pytest.fixture
+def active_fasta_with_motif(tmp_path):
+    """30 × 170 bp sequences with GATA1 consensus 'AGATAAGG' planted at pos 50."""
+    rng = np.random.default_rng(42)
+    motif = "AGATAAGG"
+    lines = []
+    for i in range(30):
+        left = "".join(rng.choice(list("ACGT"), 50))
+        right = "".join(rng.choice(list("ACGT"), 170 - 50 - len(motif)))
+        lines.append(f">active_{i:03d}\n{left + motif + right}")
+    p = tmp_path / "active.fa"
+    p.write_text("\n".join(lines) + "\n")
+    return str(p)
+
+
+@pytest.fixture
+def background_fasta_no_motif(tmp_path):
+    """50 × 170 bp purely random ACGT sequences."""
+    rng = np.random.default_rng(99)
+    lines = [
+        f">bg_{i:03d}\n{''.join(rng.choice(list('ACGT'), 170))}"
+        for i in range(50)
+    ]
+    p = tmp_path / "background.fa"
+    p.write_text("\n".join(lines) + "\n")
+    return str(p)
+
+
+@pytest.fixture
+def manifest_with_sequences_fixture(tmp_path, classified_fixture):
+    """
+    TSV manifest with element_id + sequence columns, covering every ID in
+    classified_fixture.  170 bp random sequences — content is irrelevant for
+    the bridge tests; only the lookup matters.
+    """
+    rng = np.random.default_rng(101)
+    rows = []
+    for eid in classified_fixture["element_id"]:
+        seq = "".join(rng.choice(list("ACGT"), size=170))
+        rows.append({"element_id": eid, "sequence": seq})
+    p = tmp_path / "manifest.tsv"
+    pd.DataFrame(rows).to_csv(p, sep="\t", index=False)
+    return str(p)
+
+
+@pytest.fixture
+def both_random_fasta(tmp_path):
+    """Two random FASTAs (no enrichment expected) — returns (active_path, bg_path)."""
+    rng = np.random.default_rng(77)
+    active = [
+        f">a_{i:03d}\n{''.join(rng.choice(list('ACGT'), 170))}"
+        for i in range(30)
+    ]
+    bg = [
+        f">b_{i:03d}\n{''.join(rng.choice(list('ACGT'), 170))}"
+        for i in range(50)
+    ]
+    a = tmp_path / "active_rand.fa"
+    b = tmp_path / "bg_rand.fa"
+    a.write_text("\n".join(active) + "\n")
+    b.write_text("\n".join(bg) + "\n")
+    return str(a), str(b)
+
+
+@pytest.fixture
+def motif_fixture() -> pd.DataFrame:
+    """Synthetic TF-motif enrichment table (8 motifs, mixed significance)."""
+    return pd.DataFrame({
+        "tf_name": ["GATA1", "AP-1", "SP1", "NF-E2", "CEBPB", "HNF4A", "FOXA1", "ETS1"],
+        "odds_ratio": [4.2, 3.1, 2.5, 3.8, 1.3, 1.9, 2.1, 1.6],
+        "fdr": [1e-8, 2e-5, 3e-3, 5e-7, 0.12, 0.03, 0.01, 0.08],
+        "n_active_hits": [45, 38, 22, 41, 8, 15, 19, 11],
+        "n_background_hits": [12, 15, 10, 13, 7, 9, 11, 8],
+    })

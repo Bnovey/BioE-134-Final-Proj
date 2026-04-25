@@ -132,6 +132,14 @@ def call_activity(
         df["fdr"] = fdrs
         df["active"] = df["fdr"] < fdr_threshold
 
+        warnings_list: list[str] = []
+        if len(neg_ratios) < 20:
+            warnings_list.append(
+                f"Only {len(neg_ratios)} negative controls available; the null "
+                f"distribution is underpowered (recommend ≥20). FDR estimates "
+                f"may be unreliable."
+            )
+
         return df, {
             "method": "z_test_vs_neg_ctrl",
             "n_neg_controls": int(neg_mask.sum()),
@@ -140,6 +148,7 @@ def call_activity(
             "n_active": int(df["active"].sum()),
             "n_inactive": int((~df["active"]).sum()),
             "activity_rate": round(float(df["active"].mean()), 4),
+            "warnings": warnings_list,
         }
 
     df["pval"] = np.nan
@@ -210,10 +219,29 @@ def compute_variant_delta_scores(
     if not {"variant_family", "is_reference"}.issubset(manifest.columns):
         manifest = _add_variant_cols(manifest)
 
+    # activity_results.tsv may already carry variant_family / is_reference
+    # from an earlier manifest merge; drop them before re-merging so we don't
+    # end up with _x/_y suffixed columns.
+    results = results.drop(
+        columns=[c for c in ("variant_family", "is_reference") if c in results.columns]
+    )
     df = results.merge(
         manifest[["oligo_id", "variant_family", "is_reference"]],
         on="oligo_id", how="left",
     )
+    # Round-tripping a Python bool through CSV produces the strings "True"/
+    # "False"; coerce to a real bool before comparing so siblings are filtered
+    # correctly.
+    if df["is_reference"].dtype != bool:
+        df["is_reference"] = (
+            df["is_reference"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .map({"true": True, "false": False, "1": True, "0": False})
+            .fillna(False)
+            .astype(bool)
+        )
 
     families = df["variant_family"].dropna().unique()
     rows = []
@@ -221,12 +249,12 @@ def compute_variant_delta_scores(
 
     for fam in families:
         fam_df = df[df["variant_family"] == fam]
-        ref_rows = fam_df[fam_df["is_reference"] == True]
+        ref_rows = fam_df[fam_df["is_reference"]]
         if len(ref_rows) == 0:
             skipped += 1
             continue
         ref_log2 = float(ref_rows["log2_ratio"].iloc[0])
-        mutants = fam_df[fam_df["is_reference"] != True]
+        mutants = fam_df[~fam_df["is_reference"]]
         for _, row in mutants.iterrows():
             rows.append({
                 "oligo_id": row["oligo_id"],

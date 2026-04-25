@@ -1,0 +1,120 @@
+
+======================================================================
+STEP 1 · Run generator
+======================================================================
+Go to Chat and ask the agent to run QC.
+Generator outputs in: /Users/sarrahrose/.creseq/uploads
+  activity_results.tsv         192,076 bytes
+  design_manifest.tsv          123,714 bytes
+  mapping_table.tsv            436,429 bytes
+  plasmid_counts.tsv           325,454 bytes
+  rna_counts.tsv               385,068 bytes
+
+======================================================================
+STEP 2 · normalize_activity
+======================================================================
+Per-barcode rows: 12,360 (DNA), 12,360 (RNA), reps=['rna_count_rep1', 'rna_count_rep2']
+Aggregated to 600 elements → element_counts.tsv
+normalize_activity summary: {
+  "n_elements": 600,
+  "median_log2_activity": 1.2929548306440681,
+  "mean_log2_activity": 2.0340549422249605,
+  "n_low_dna_coverage": 0,
+  "n_low_rna_coverage": 0,
+  "warnings": [],
+  "pass": true
+}
+Activity table → activity_table.tsv  (median mean_activity=1.293)
+
+======================================================================
+STEP 3 · call_active_elements
+======================================================================
+Negative controls: 150 IDs (e.g. ['NEGCTRL000', 'NEGCTRL001', 'NEGCTRL002']...)
+Classified table → classified_elements.tsv
+{
+  "n_total_elements": 600,
+  "n_negative_controls": 150,
+  "n_test_elements": 450,
+  "n_active": 213,
+  "n_inactive": 237,
+  "fdr_threshold": 0.05,
+  "method": "empirical",
+  "null_distribution": {
+    "center": 1.0221294708872497,
+    "scale": 0.39737094869007406,
+    "estimator": "median/MAD",
+    "n_controls": 150,
+    "shapiro_pvalue": 6.892282369663419e-07
+  },
+  "active_summary": {
+    "median_activity": 3.9437557517375823,
+    "median_fold_over_controls": 7.576997547113422,
+    "activity_range": [
+      1.83474242130641,
+      6.2907338702240105
+    ]
+  },
+  "n_silencer_candidates": 4
+}
+Warnings:
+  - Shapiro–Wilk p=6.89e-07 < 0.01: negative-control distribution is non-normal; the empirical z-test assumes normality. Consider the GLM method or more controls.
+  [pyWarning] UserWarning: Shapiro–Wilk p=6.89e-07 < 0.01: negative-control distribution is non-normal; the empirical z-test assumes normality. Consider the GLM method or more controls.
+
+======================================================================
+STEP 4 · extract_sequences_to_fasta
+======================================================================
+{
+  "active_fasta": "/Users/sarrahrose/Downloads/x/BioE-134-Final-Proj/demo_outputs/active.fa",
+  "background_fasta": "/Users/sarrahrose/Downloads/x/BioE-134-Final-Proj/demo_outputs/background.fa",
+  "n_active": 213,
+  "n_background": 237
+}
+
+======================================================================
+STEP 5 · motif_enrichment (JASPAR2024 CORE Vertebrates)
+======================================================================
+Enrichment table → motif_enrichment.tsv
+67 motifs enriched at FDR < 0.05. Top 10:
+  JUNB: OR=11.6, FDR=8.6e-25, hits=123/213
+  JUND: OR=9.6, FDR=7.8e-21, hits=113/213
+  FOSL1: OR=7.4, FDR=4.6e-19, hits=126/213
+  NFE2: OR=6.1, FDR=5.3e-14, hits=100/213
+  Gata3: OR=5.9, FDR=2.5e-15, hits=119/213
+  Jun: OR=5.8, FDR=1.1e-15, hits=127/213
+  JDP2: OR=5.3, FDR=3.6e-13, hits=107/213
+  FOS: OR=5.2, FDR=2.8e-14, hits=130/213
+  Mecom: OR=5.1, FDR=1.9e-02, hits=17/213
+  TRPS1: OR=5.0, FDR=3.0e-13, hits=119/213
+
+Motifs evaluated: 847 | FDR<0.05: 67
+motif_id     tf_name  n_active_hits  n_background_hits  n_active_total  n_background_total  odds_ratio   pvalue      fdr
+MA0727.2       NR3C2              4                  0             213                 237       999.0 0.049451 0.346155
+MA1967.2 TFAP4::FLI1              1                  0             213                 237       999.0 0.473333 1.000000
+MA1505.2       HOXC8            213                236             213                 237       999.0 0.526667 1.000000
+MA0113.4       NR3C1              4                  0             213                 237       999.0 0.049451 0.346155
+MA1951.2         FOS              2                  0             213                 237       999.0 0.223489 0.807296
+MA1536.2       NR2C2            213                237             213                 237       999.0 1.000000 1.000000
+MA0050.4        Irf1              4                  0             213                 237       999.0 0.049451 0.346155
+MA0051.2        IRF2              1                  0             213                 237       999.0 0.473333 1.000000
+
+======================================================================
+STEP 6 · plot_creseq
+======================================================================
+Volcano → volcano.png
+   Volcano plot showing 450 test elements. 213 elements are active (FDR < 0.05), shown in red. Inactive elements in grey. 150 negative controls shown as blue diamonds.
+Motif dot plot → motif_dotplot.png
+   Motif enrichment dot plot showing top 20 motifs. Top enriched: JUNB (OR=11.6, FDR=8.6e-25). Dot size = number of hits in active elements, color = significance.
+
+======================================================================
+DONE · contents of demo_outputs/
+======================================================================
+  _run.log                                     0 bytes
+  active.fa                               38,856 bytes
+  activity_table.tsv                      31,019 bytes
+  background.fa                           43,494 bytes
+  classified_elements.tsv                 67,562 bytes
+  element_counts.tsv                      15,848 bytes
+  manifest_with_sequences.tsv            109,220 bytes
+  motif_dotplot.png                      137,628 bytes
+  motif_enrichment.tsv                    64,832 bytes
+  volcano.png                             87,914 bytes

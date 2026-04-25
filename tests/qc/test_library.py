@@ -491,14 +491,15 @@ class TestVariantFamilyCoverage:
 
         assert isinstance(df, pd.DataFrame)
         assert set(df.columns) >= {
-            "parent_element_id",
+            "variant_family",
+            "reference_oligo_id",
             "n_variants_designed",
             "n_variants_recovered",
             "reference_recovered",
             "family_complete",
             "missing_variants",
         }
-        assert summ["n_families"] == 30  # 30 knockout → test_element families
+        assert summ["n_families"] == 30  # 30 knockout-paired test_element families
         assert summ["pass"] is True  # healthy library: all refs present
 
     def test_missing_reference_fails(self, missing_ref_mapping_path, design_manifest_path):
@@ -510,12 +511,13 @@ class TestVariantFamilyCoverage:
         assert any("reference" in w.lower() for w in summ["warnings"])
 
     def test_no_families_returns_empty(self, mapping_table_path, tmp_path):
-        """Manifest with no parent_element_id links → no families, pass=True."""
+        """Manifest with no variant_family entries → no families, pass=True."""
         manifest = pd.DataFrame(
             {
                 "oligo_id": [f"oligo_{i:04d}" for i in range(50)],
                 "designed_category": ["test_element"] * 50,
-                "parent_element_id": [None] * 50,
+                "variant_family": [None] * 50,
+                "is_reference": [False] * 50,
             }
         )
         p = tmp_path / "no_families.tsv"
@@ -524,6 +526,19 @@ class TestVariantFamilyCoverage:
         assert len(df) == 0
         assert summ["n_families"] == 0
         assert summ["pass"] is True
+
+    def test_missing_columns_raises(self, mapping_table_path, tmp_path):
+        """Manifest missing variant_family/is_reference columns → ValueError."""
+        manifest = pd.DataFrame(
+            {
+                "oligo_id": [f"oligo_{i:04d}" for i in range(10)],
+                "designed_category": ["test_element"] * 10,
+            }
+        )
+        p = tmp_path / "no_variant_cols.tsv"
+        manifest.to_csv(p, sep="\t", index=False)
+        with pytest.raises(ValueError, match="variant_family|is_reference"):
+            variant_family_coverage(mapping_table_path, str(p))
 
     def test_empty_mapping_raises(self, empty_mapping_path, design_manifest_path):
         with pytest.raises(ValueError):
