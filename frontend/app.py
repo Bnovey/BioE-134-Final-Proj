@@ -119,13 +119,13 @@ if page == "📤 Upload":
     with col3:
         design_fasta_str = st.text_input(
             "Design FASTA",
-            placeholder="~/Downloads/pilot_hepg2_elements.fa",
+            placeholder="~/Desktop/creseq_test_data/reference.fa",
             help="FASTA of all designed oligo sequences — used by MPRAflow for alignment.",
         )
     with col4:
         ref_path_str = st.text_input(
             "Barcode Reference TSV",
-            placeholder="~/Downloads/reference_library.tsv",
+            placeholder="~/Desktop/creseq_test_data/reference_library.tsv",
             help="TSV with oligo_id, barcode, sequence, designed_category — for manifest and fallback matching.",
         )
 
