@@ -265,7 +265,9 @@ if page == "📤 Upload":
         try:
             if skip_assoc:
                 import shutil as _shutil
-                _shutil.copy(existing_mapping_path, UPLOAD_DIR / "mapping_table.tsv")
+                _dest = UPLOAD_DIR / "mapping_table.tsv"
+                if existing_mapping_path.resolve() != _dest.resolve():
+                    _shutil.copy(existing_mapping_path, _dest)
                 assoc_stats = None
                 progress.progress(25, text="Steps 2+3 — DNA and RNA counting (parallel)…")
             else:
