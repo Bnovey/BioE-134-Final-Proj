@@ -62,7 +62,12 @@ def _open_fastq(path: Path):
 
 
 def _iter_fastq(path: Path):
-    """Yield (read_name, barcode_i5, sequence) for each read."""
+    """Yield (read_name, barcode_i5, sequence) for each read.
+
+    Barcode source (in priority order):
+      1. Separate barcode FASTQ passed via fastq_bc (see _load_bc_fastq).
+      2. i5 index embedded in R1 header: @name 1:N:0:I5BARCODE+I7INDEX
+    """
     with _open_fastq(path) as fh:
         while True:
             header = fh.readline()
@@ -72,7 +77,6 @@ def _iter_fastq(path: Path):
             fh.readline()   # +
             fh.readline()   # qual
 
-            # Header: @name 1:N:0:I5BARCODE+I7INDEX
             name = header.split()[0][1:]     # strip @
             barcode = None
             parts = header.split()
@@ -80,6 +84,26 @@ def _iter_fastq(path: Path):
                 idx = parts[1].split(":")[-1]  # last colon-field
                 barcode = idx.split("+")[0]    # i5 before +
             yield name, barcode, seq
+
+
+def _load_bc_fastq(path: Path) -> dict[str, str]:
+    """Load a separate barcode FASTQ → {read_name: barcode_sequence}.
+
+    Used when the i5 barcode is delivered as its own index read file
+    (ENCODE format) rather than embedded in R1/R2 headers.
+    """
+    bc_map: dict[str, str] = {}
+    with _open_fastq(path) as fh:
+        while True:
+            header = fh.readline()
+            if not header:
+                break
+            seq  = fh.readline().strip()
+            fh.readline()   # +
+            fh.readline()   # qual
+            name = header.split()[0][1:]
+            bc_map[name] = seq
+    return bc_map
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +236,13 @@ def _filter_assignments(
 # Design manifest builder
 # ---------------------------------------------------------------------------
 
+def _open_fasta(path: Path):
+    """Open a FASTA file, handling gzip regardless of extension."""
+    with open(path, "rb") as f:
+        magic = f.read(2)
+    return gzip.open(path, "rt") if magic == b"\x1f\x8b" else open(path)
+
+
 def _build_design_manifest(design_fasta: Path, labels_path: Path | None) -> pd.DataFrame:
     """
     Build design_manifest from design FASTA (sequences) + labels TSV (categories).
@@ -219,7 +250,7 @@ def _build_design_manifest(design_fasta: Path, labels_path: Path | None) -> pd.D
     # Parse FASTA
     records = []
     current_id = current_seq = None
-    with open(design_fasta) as fh:
+    with _open_fasta(design_fasta) as fh:
         for line in fh:
             line = line.strip()
             if line.startswith(">"):
@@ -263,6 +294,7 @@ def run_association(
     outdir: Path,
     *,
     fastq_r2: Path | None = None,
+    fastq_bc: Path | None = None,
     labels_path: Path | None = None,
     min_cov: int = 3,
     min_frac: float = 0.5,
@@ -274,10 +306,13 @@ def run_association(
 
     Parameters
     ----------
-    fastq_r1        : R1 FASTQ (oligo reads; barcode in i5 header index)
+    fastq_r1        : R1 FASTQ (oligo reads)
     design_fasta    : FASTA of all designed oligo sequences
     outdir          : Directory to write output TSVs
     fastq_r2        : R2 FASTQ (optional; paired oligo reads for better alignment)
+    fastq_bc        : Separate barcode index FASTQ (ENCODE format: i5 read as its
+                      own file). When provided, barcodes are taken from here instead
+                      of the R1 header. Read names must match R1.
     labels_path     : TSV with oligo_id + designed_category columns
     min_cov         : Minimum reads per barcode-oligo pair (default 3)
     min_frac        : Minimum fraction mapping to same oligo (default 0.5)
@@ -292,16 +327,26 @@ def run_association(
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Association: parsing R1 headers and sequences")
+    logger.info("Association: parsing R1 sequences")
+    # Load separate barcode FASTQ first if provided (ENCODE format)
+    bc_from_file: dict[str, str] = {}
+    if fastq_bc is not None:
+        logger.info("Association: loading barcodes from separate index FASTQ %s", fastq_bc)
+        bc_from_file = _load_bc_fastq(Path(fastq_bc))
+        logger.info("  %d barcodes loaded from index FASTQ", len(bc_from_file))
+
     names, raw_barcodes, sequences = [], [], []
-    for name, bc, seq in _iter_fastq(fastq_r1):
+    for name, header_bc, seq in _iter_fastq(fastq_r1):
+        # Prefer explicit barcode file; fall back to header-embedded i5
+        bc = bc_from_file.get(name) if bc_from_file else header_bc
         if bc:
             names.append(name)
             raw_barcodes.append(bc)
             sequences.append(seq)
 
     n_reads = len(names)
-    logger.info("  %d reads with i5 barcode", n_reads)
+    source = "index FASTQ" if bc_from_file else "R1 header"
+    logger.info("  %d reads with i5 barcode (source: %s)", n_reads, source)
 
     # STARCODE clustering
     logger.info("Association: clustering barcodes with STARCODE (dist=%d)", starcode_dist)
@@ -353,8 +398,9 @@ def run_association(
     logger.info("  %d barcodes → %d oligos after filtering", n_barcodes, n_oligos)
 
     # Add placeholder CIGAR / MD
-    mapping_df["cigar"] = mapping_df["barcode"].apply(lambda b: f"{len(b)}M")
-    mapping_df["md"]    = mapping_df["barcode"].apply(lambda b: str(len(b)))
+    _bc_len_str = mapping_df["barcode"].str.len().astype(str)
+    mapping_df["cigar"] = _bc_len_str + "M"
+    mapping_df["md"] = _bc_len_str
 
     # Design manifest
     manifest = _build_design_manifest(design_fasta, labels_path)
