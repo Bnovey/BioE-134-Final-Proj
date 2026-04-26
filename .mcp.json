@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "creseq-mcp": {
+      "command": "python",
+      "args": ["-m", "creseq_mcp.server"],
+      "cwd": "/Users/bowmannovey/Desktop/BioE-134-Final-Proj"
+    }
+  }
+}

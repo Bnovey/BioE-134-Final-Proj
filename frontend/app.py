@@ -1,30 +1,16 @@
-"""CRE-seq Analysis Tool — Streamlit frontend mockup."""
+"""CRE-seq Analysis Tool — Streamlit frontend."""
 
 from __future__ import annotations
-
-import io
-import os
-import time
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-
-from agent_stub import query_agent as stub_query_agent
-from mock_data import get_demo_data
-
 from pathlib import Path
+
 UPLOAD_DIR = Path.home() / "Desktop" / "creseq_outputs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-try:
-    from agent import ClaudeQCAgent, is_available as _gemini_available
-    _GEMINI_READY = True
-except ImportError:
-    _GEMINI_READY = False
-    _gemini_available = lambda: False
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -35,32 +21,19 @@ st.set_page_config(
 )
 
 # ── session state defaults ────────────────────────────────────────────────────
+def _load_results() -> pd.DataFrame:
+    p = UPLOAD_DIR / "activity_results.tsv"
+    if p.exists():
+        df = pd.read_csv(p, sep="\t")
+        if "oligo_id" in df.columns and "element_id" not in df.columns:
+            df = df.rename(columns={"oligo_id": "element_id"})
+        return df
+    return pd.DataFrame()
+
 if "data" not in st.session_state:
-    st.session_state.data: pd.DataFrame = get_demo_data()
-if "data_source" not in st.session_state:
-    st.session_state.data_source: str = "demo"
+    st.session_state.data: pd.DataFrame = _load_results()
 if "analysis_run" not in st.session_state:
-    st.session_state.analysis_run: bool = True
-if "messages" not in st.session_state:
-    st.session_state.messages: list[dict] = [
-        {
-            "role": "assistant",
-            "content": (
-                "Hello! I'm the CRE-seq MCP agent. I can run **QC**, **normalization**, "
-                "**activity calling**, **motif enrichment**, **variant effect prediction**, "
-                "and more.\n\nType **help** to see all available tools, or just describe what you want."
-            ),
-            "tools": [],
-        }
-    ]
-if "gemini_agent" not in st.session_state:
-    st.session_state.gemini_agent = None
-if "file_paths" not in st.session_state:
-    st.session_state.file_paths: dict[str, str] = {
-        "mapping_table_path": "",
-        "plasmid_count_path": "",
-        "design_manifest_path": "",
-    }
+    st.session_state.analysis_run: bool = (UPLOAD_DIR / "activity_results.tsv").exists()
 
 # ── sidebar nav ───────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -69,19 +42,15 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Navigation",
-        ["📤 Upload", "💬 Chat", "📊 QC & Plots", "📋 Results"],
+        ["📤 Upload", "📊 QC & Plots", "📋 Results"],
         label_visibility="collapsed",
     )
     st.divider()
-    st.markdown("**Data source**")
-    source_label = "Demo data" if st.session_state.data_source == "demo" else "Uploaded file"
-    st.info(f"**{source_label}** · {len(st.session_state.data):,} elements")
-    if st.session_state.data_source != "demo":
-        if st.button("Reset to demo data", use_container_width=True):
-            st.session_state.data = get_demo_data()
-            st.session_state.data_source = "demo"
-            st.session_state.analysis_run = True
-            st.rerun()
+    n_elements = len(st.session_state.data)
+    if n_elements:
+        st.info(f"**{n_elements:,} elements** loaded from activity_results.tsv")
+    else:
+        st.warning("No results yet — complete the Upload pipeline first.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -367,66 +336,12 @@ if page == "📤 Upload":
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE: CHAT
 # ══════════════════════════════════════════════════════════════════════════════
-elif page == "💬 Chat":
-    st.header("MCP Agent Chat")
-    st.caption("The agent dispatches MCP tools based on your request.")
-
-    # render history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            for tool in msg.get("tools", []):
-                st.info(f"🔧 Tool called: `{tool}`")
-
-    # input
-    if prompt := st.chat_input("Ask the agent… (e.g. 'run QC', 'find enriched motifs')"):
-        st.session_state.messages.append({"role": "user", "content": prompt, "tools": []})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Agent thinking…"):
-                if _GEMINI_READY and _gemini_available():
-                    if st.session_state.gemini_agent is None:
-                        st.session_state.gemini_agent = ClaudeQCAgent(
-                            os.environ["ANTHROPIC_API_KEY"]
-                        )
-                    response = st.session_state.gemini_agent.send_message(prompt)
-                else:
-                    time.sleep(0.4)
-                    response = stub_query_agent(prompt, has_data=True)
-            st.markdown(response.text)
-            for tool in response.tools_called:
-                st.info(f"🔧 Tool called: `{tool}`")
-
-        st.session_state.messages.append(
-            {"role": "assistant", "content": response.text, "tools": response.tools_called}
-        )
-
-    with st.sidebar:
-        st.divider()
-        if _GEMINI_READY and _gemini_available():
-            st.success("Claude connected", icon="✅")
-        else:
-            st.warning("Set ANTHROPIC_API_KEY to enable real QC tools", icon="⚠️")
-        st.divider()
-        if st.button("🗑 Clear chat", use_container_width=True):
-            st.session_state.messages = [
-                {
-                    "role": "assistant",
-                    "content": "Chat cleared. How can I help?",
-                    "tools": [],
-                }
-            ]
-            if st.session_state.gemini_agent is not None:
-                st.session_state.gemini_agent.reset()
-            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE: QC & PLOTS
 # ══════════════════════════════════════════════════════════════════════════════
-elif page == "📊 QC & Plots":
+if page == "📊 QC & Plots":
     st.header("QC & Analysis Plots")
     df = st.session_state.data
 
@@ -485,7 +400,6 @@ elif page == "📊 QC & Plots":
                     "barcode_uniformity": "Barcode Uniformity",
                     "plasmid_depth_summary": "Plasmid Depth",
                     "gc_content_bias": "GC Content Bias",
-                    "oligo_length_qc": "Oligo Length QC",
                     "variant_family_coverage": "Variant Family Coverage",
                 }
                 cols = st.columns(3)
@@ -771,10 +685,12 @@ elif page == "📊 QC & Plots":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📋 Results":
     st.header("Analysis Results")
+    st.session_state.data = _load_results()
     df = st.session_state.data
 
-    if not st.session_state.analysis_run:
-        st.warning("Analysis has not been run yet. Go to **Upload** and click **Run Analysis**.")
+    if df.empty:
+        st.warning("No results yet — complete the Upload pipeline first.")
+        st.stop()
 
     col1, col2, col3, col4 = st.columns(4)
     n_active = int(df["active"].sum()) if "active" in df.columns else 0
