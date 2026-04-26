@@ -6,4 +6,4 @@ __pycache__/
 dist/
 build/
 *.egg
-*.md
+CLAUDE_CODE_PLAN_*.md

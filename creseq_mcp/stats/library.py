@@ -80,6 +80,54 @@ def _bh_fdr(pvals: pd.Series) -> pd.Series:
 
 
 # ---------------------------------------------------------------------------
+# Tool 0: prepare_counts
+# ---------------------------------------------------------------------------
+
+def prepare_counts(
+    plasmid_counts_path: str | Path,
+    rna_counts_path: str | Path,
+    output_path: str | Path,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Reshape generator outputs into the long-format table normalize_activity expects.
+
+    Joins plasmid + RNA counts on (barcode, oligo_id), melts rna_count_rep1/rep2
+    into separate rows with a `replicate` column, and renames to the canonical
+    schema: element_id, barcode_id, dna_counts, rna_counts, replicate.
+    """
+    plasmid = _read_table(plasmid_counts_path)
+    rna = _read_table(rna_counts_path)
+    _check_cols(plasmid, {"barcode", "oligo_id", "dna_count"}, str(plasmid_counts_path))
+
+    rep_cols = [c for c in rna.columns if c.startswith("rna_count_rep")]
+    if not rep_cols:
+        raise ValueError(f"{rna_counts_path}: expected rna_count_rep* columns")
+
+    merged = plasmid.merge(rna, on=["barcode", "oligo_id"], how="inner")
+    long = merged.melt(
+        id_vars=["barcode", "oligo_id", "dna_count"],
+        value_vars=rep_cols,
+        var_name="replicate",
+        value_name="rna_counts",
+    )
+    long["replicate"] = long["replicate"].str.removeprefix("rna_count_rep").astype(int)
+    long = long.rename(columns={
+        "oligo_id": "element_id",
+        "barcode": "barcode_id",
+        "dna_count": "dna_counts",
+    })[["element_id", "barcode_id", "replicate", "dna_counts", "rna_counts"]]
+
+    long.to_csv(output_path, sep="\t", index=False)
+    summary = {
+        "n_rows": int(len(long)),
+        "n_elements": int(long["element_id"].nunique()),
+        "n_replicates": int(long["replicate"].nunique()),
+        "output_path": str(output_path),
+    }
+    return long, summary
+
+
+# ---------------------------------------------------------------------------
 # Tool 1: normalize_activity
 # ---------------------------------------------------------------------------
 

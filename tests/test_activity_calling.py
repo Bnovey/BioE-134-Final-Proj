@@ -240,14 +240,3 @@ def test_summary_fields(activity_fixture, neg_control_ids):
     assert required.issubset(set(summary.keys()))
 
 
-# ---------------------------------------------------------------------------
-# Method concordance
-# ---------------------------------------------------------------------------
-
-
-def test_empirical_and_glm_agree(activity_fixture, neg_control_ids, tmp_path):
-    """Empirical and GLM methods should agree on >80% of calls (well-powered)."""
-    pytest.skip(
-        "GLM method not yet implemented — enable when activity_calling.py "
-        "has both methods"
-    )

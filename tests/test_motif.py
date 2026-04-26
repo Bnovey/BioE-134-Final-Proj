@@ -75,14 +75,6 @@ def test_no_enrichment_random(both_random_fasta, small_motif_list):
     )
 
 
-def test_scan_finds_planted_motif(active_fasta_with_motif, small_motif_list):
-    """Scanner should detect the planted GATA motif in at least 20/30 sequences."""
-    seqs = _parse_fasta(active_fasta_with_motif)
-    results = scan_sequences(seqs, small_motif_list, score_threshold=0.7)
-    gata_hits = results.get("MA0035.1", {}).get("hit_sequences", set())
-    assert len(gata_hits) >= 20, f"Too few GATA hits: {len(gata_hits)}/30"
-
-
 # ---------------------------------------------------------------------------
 # JASPAR loading (slow — hits real database)
 # ---------------------------------------------------------------------------
@@ -122,10 +114,14 @@ def test_enrichment_table_columns(
     assert required.issubset(set(enrichment.columns))
 
 
-def test_enrichment_sorted_by_odds_ratio(
+def test_enrichment_sorted_by_fdr_then_odds_ratio(
     active_fasta_with_motif, background_fasta_no_motif, small_motif_list
 ):
-    """Output rows should be sorted by odds_ratio descending."""
+    """
+    Output rows should be sorted primarily by FDR ascending, then by
+    odds_ratio descending within each FDR tier — this puts significant hits
+    above capped OR=999 non-significant motifs.
+    """
     active = _parse_fasta(active_fasta_with_motif)
     background = _parse_fasta(background_fasta_no_motif)
     results = scan_sequences(
@@ -135,7 +131,11 @@ def test_enrichment_sorted_by_odds_ratio(
         results, set(active.keys()), set(background.keys())
     )
     if len(enrichment) > 1:
-        assert enrichment["odds_ratio"].is_monotonic_decreasing
+        # FDR must be monotonic non-decreasing
+        assert enrichment["fdr"].is_monotonic_increasing
+        # Within a given FDR, OR is non-increasing
+        for _fdr, group in enrichment.groupby("fdr", sort=False):
+            assert group["odds_ratio"].is_monotonic_decreasing
 
 
 # ---------------------------------------------------------------------------

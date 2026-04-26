@@ -371,25 +371,9 @@ for rep in ["rep1", "rep2"]:
 rna_rows.to_csv(UPLOAD_DIR / "rna_counts.tsv", sep="\t", index=False)
 print(f"  {len(rna_rows)} rows, 2 replicates written")
 
-# ── run activity analysis ────────────────────────────────────────────────────
-
-print("Running activity analysis…")
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from creseq_mcp.qc.activity import activity_report
-
-_, summary = activity_report(
-    UPLOAD_DIR / "plasmid_counts.tsv",
-    UPLOAD_DIR / "rna_counts.tsv",
-    UPLOAD_DIR / "design_manifest.tsv",
-    upload_dir=UPLOAD_DIR,
-)
-print(f"  Active: {summary['n_active']} / {summary['n_oligos_after_filter']} ({summary['activity_rate']:.1%})")
-
 print(f"\nAll files written to {UPLOAD_DIR}")
 print("  mapping_table.tsv")
 print("  plasmid_counts.tsv")
 print("  design_manifest.tsv")
 print("  rna_counts.tsv")
-print("  activity_results.tsv")
 print("\nGo to Chat and ask the agent to run QC.")

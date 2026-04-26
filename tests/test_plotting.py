@@ -31,18 +31,12 @@ from creseq_mcp.plotting import (
 # ---------------------------------------------------------------------------
 
 
-def test_volcano_creates_file(classified_fixture, tmp_path):
-    out = tmp_path / "volcano.png"
-    result = _plot_volcano(classified_fixture, str(out))
-    assert out.exists()
-    assert out.stat().st_size > 0
-    assert "plot_path" in result
-    assert "description" in result
-
-
 def test_volcano_description_has_counts(classified_fixture, tmp_path):
+    """Volcano plot writes a non-empty PNG and emits a description with counts."""
     out = tmp_path / "volcano.png"
     result = _plot_volcano(classified_fixture, str(out))
+    assert out.exists() and out.stat().st_size > 0
+    assert "plot_path" in result and "description" in result
     assert "active" in result["description"].lower()
     assert any(c.isdigit() for c in result["description"])
 
@@ -53,29 +47,16 @@ def test_volcano_description_has_counts(classified_fixture, tmp_path):
 
 
 def test_ranked_activity_creates_file(classified_fixture, tmp_path):
+    """Ranked-activity plot writes a non-empty PNG and emits a description."""
     out = tmp_path / "ranked.png"
     result = _plot_ranked_activity(classified_fixture, str(out))
-    assert out.exists()
-    assert out.stat().st_size > 0
+    assert out.exists() and out.stat().st_size > 0
     assert "plot_path" in result and "description" in result
-
-
-def test_ranked_activity_sorted(classified_fixture):
-    """Verify the sort order applied inside the plot helper would be monotonic."""
-    df_sorted = classified_fixture.sort_values("mean_activity", ascending=True)
-    assert df_sorted["mean_activity"].is_monotonic_increasing
 
 
 # ---------------------------------------------------------------------------
 # Replicate correlation
 # ---------------------------------------------------------------------------
-
-
-def test_replicate_correlation_creates_file(activity_with_reps_fixture, tmp_path):
-    out = tmp_path / "corr.png"
-    result = _plot_replicate_correlation(activity_with_reps_fixture, str(out))
-    assert out.exists()
-    assert out.stat().st_size > 0
 
 
 def test_replicate_correlation_needs_two_reps(classified_fixture, tmp_path):
@@ -86,8 +67,10 @@ def test_replicate_correlation_needs_two_reps(classified_fixture, tmp_path):
 
 
 def test_replicate_correlation_description_has_r(activity_with_reps_fixture, tmp_path):
+    """Correlation plot writes a non-empty PNG and reports Pearson r."""
     out = tmp_path / "corr.png"
     result = _plot_replicate_correlation(activity_with_reps_fixture, str(out))
+    assert out.exists() and out.stat().st_size > 0
     assert "Pearson r" in result["description"]
 
 
@@ -117,13 +100,6 @@ def test_annotation_boxplot_bad_file(classified_fixture, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_motif_dotplot_creates_file(motif_fixture, tmp_path):
-    out = tmp_path / "motifs.png"
-    result = _plot_motif_dotplot(motif_fixture, str(out))
-    assert out.exists()
-    assert out.stat().st_size > 0
-
-
 def test_motif_dotplot_bad_columns(tmp_path):
     bad_df = pd.DataFrame({"gene": ["A"], "score": [1.0]})
     out = tmp_path / "motifs.png"
@@ -131,8 +107,19 @@ def test_motif_dotplot_bad_columns(tmp_path):
         _plot_motif_dotplot(bad_df, str(out))
 
 
-def test_motif_dotplot_empty_significant(tmp_path):
-    """No motif passes FDR < 0.05 — still plot top by OR and note it."""
+def test_motif_dotplot_empty_significant(motif_fixture, tmp_path):
+    """
+    Two-in-one: the motif_fixture path should write a non-empty PNG, and a
+    table where nothing reaches FDR<0.05 should still produce a plot with the
+    fallback note.
+    """
+    # Happy path — file exists and is non-empty.
+    happy_out = tmp_path / "motifs_happy.png"
+    happy_result = _plot_motif_dotplot(motif_fixture, str(happy_out))
+    assert happy_out.exists() and happy_out.stat().st_size > 0
+    assert "plot_path" in happy_result and "description" in happy_result
+
+    # No-significant fallback.
     df = pd.DataFrame({
         "tf_name": ["TF1", "TF2", "TF3"],
         "odds_ratio": [1.2, 1.1, 0.9],
@@ -141,7 +128,7 @@ def test_motif_dotplot_empty_significant(tmp_path):
     })
     out = tmp_path / "motifs.png"
     result = _plot_motif_dotplot(df, str(out))
-    assert out.exists()
+    assert out.exists() and out.stat().st_size > 0
     assert "No motifs reached FDR" in result["description"]
 
 
