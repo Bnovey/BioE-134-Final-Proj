@@ -16,7 +16,7 @@ from agent_stub import query_agent as stub_query_agent
 from mock_data import get_demo_data
 
 from pathlib import Path
-UPLOAD_DIR = Path.home() / ".creseq" / "uploads"
+UPLOAD_DIR = Path.home() / "Desktop" / "creseq_outputs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 try:
@@ -91,35 +91,58 @@ if page == "📤 Upload":
     st.header("Upload CRE-seq Data")
     st.caption("Enter local file paths — no upload needed since the app runs on your machine.")
 
-    # ── Association inputs ───────────────────────────────────────────────────
-    st.subheader("Association (barcode → oligo mapping)")
-    col1, col2 = st.columns(2)
-    with col1:
-        assoc_r1_str = st.text_input(
-            "Association R1 FASTQ *",
-            placeholder="~/Desktop/creseq_test_data/assoc_R1.fastq.gz",
-            help="R1 oligo reads — used for alignment to the design FASTA.",
-        )
-    with col2:
-        design_fasta_str = st.text_input(
-            "Design FASTA *",
-            placeholder="~/Desktop/creseq_test_data/reference.fa",
-            help="FASTA of all designed oligo sequences — used for alignment.",
-        )
+    def _resolve(s: str) -> Path | None:
+        s = s.strip()
+        if not s:
+            return None
+        p = Path(s).expanduser()
+        return p if p.exists() else None
 
-    col1b, col2b = st.columns(2)
-    with col1b:
-        assoc_bc_str = st.text_input(
-            "Barcode index FASTQ *",
-            placeholder="~/Desktop/creseq_test_data/assoc_bc.fastq.gz",
-            help="15bp i5 barcode reads (ENCODE: separate index file). Required unless barcodes are embedded in R1 headers (older MiSeq data).",
+    # ── Skip association ─────────────────────────────────────────────────────
+    skip_assoc = st.toggle("Skip association — use existing mapping table")
+    if skip_assoc:
+        existing_mapping_str = st.text_input(
+            "Mapping table path *",
+            placeholder="~/Desktop/creseq_outputs/mapping_table.tsv",
+            help="mapping_table.tsv produced by a previous association run.",
         )
-    with col2b:
-        labels_path_str = st.text_input(
-            "Labels TSV (optional)",
-            placeholder="~/Desktop/creseq_test_data/labels.tsv",
-            help="TSV with oligo_id + designed_category columns. If omitted all oligos are labelled 'other'.",
-        )
+        existing_mapping_path = _resolve(existing_mapping_str)
+        if existing_mapping_str.strip() and not existing_mapping_path:
+            st.error(f"Mapping table not found — {existing_mapping_str.strip()}")
+    st.divider()
+
+    # ── Association inputs (hidden when skipping) ────────────────────────────
+    if not skip_assoc:
+        st.subheader("Association (barcode → oligo mapping)")
+        col1, col2 = st.columns(2)
+        with col1:
+            assoc_r1_str = st.text_input(
+                "Association R1 FASTQ *",
+                placeholder="~/Desktop/creseq_test_data/assoc_R1.fastq.gz",
+                help="R1 oligo reads — used for alignment to the design FASTA.",
+            )
+        with col2:
+            design_fasta_str = st.text_input(
+                "Design FASTA *",
+                placeholder="~/Desktop/creseq_test_data/reference.fa",
+                help="FASTA of all designed oligo sequences — used for alignment.",
+            )
+
+        col1b, col2b = st.columns(2)
+        with col1b:
+            assoc_bc_str = st.text_input(
+                "Barcode index FASTQ *",
+                placeholder="~/Desktop/creseq_test_data/assoc_bc.fastq.gz",
+                help="15bp i5 barcode reads (ENCODE: separate index file). Required unless barcodes are embedded in R1 headers (older MiSeq data).",
+            )
+        with col2b:
+            labels_path_str = st.text_input(
+                "Labels TSV (optional)",
+                placeholder="~/Desktop/creseq_test_data/labels.tsv",
+                help="TSV with oligo_id + designed_category columns. If omitted all oligos are labelled 'other'.",
+            )
+    else:
+        assoc_r1_str = assoc_bc_str = design_fasta_str = labels_path_str = ""
 
     # ── Counting inputs ──────────────────────────────────────────────────────
     st.subheader("Counting")
@@ -154,13 +177,6 @@ if page == "📤 Upload":
         mapq_thr   = adv_col5.number_input("Min MAPQ", min_value=0, max_value=60, value=20)
 
     # ── Resolve and validate paths ───────────────────────────────────────────
-    def _resolve(s: str) -> Path | None:
-        s = s.strip()
-        if not s:
-            return None
-        p = Path(s).expanduser()
-        return p if p.exists() else None
-
     assoc_r1_path  = _resolve(assoc_r1_str)
     assoc_r2_path  = _resolve(assoc_r2_str)
     assoc_bc_path  = _resolve(assoc_bc_str)
@@ -169,62 +185,76 @@ if page == "📤 Upload":
     dna_path       = _resolve(dna_path_str)
     rna_paths      = [p for s in rna_paths_str.split(",") if (p := _resolve(s)) is not None] if rna_paths_str.strip() else []
 
-    for label, val, raw in [
-        ("Association R1", assoc_r1_path, assoc_r1_str),
-        ("Design FASTA",   design_fasta,  design_fasta_str),
-        ("DNA FASTQ",      dna_path,      dna_path_str),
-    ]:
-        if raw.strip() and not val:
-            st.error(f"{label}: file not found — {raw.strip()}")
+    if not skip_assoc:
+        for label, val, raw in [
+            ("Association R1", assoc_r1_path, assoc_r1_str),
+            ("Design FASTA",   design_fasta,  design_fasta_str),
+            ("DNA FASTQ",      dna_path,      dna_path_str),
+        ]:
+            if raw.strip() and not val:
+                st.error(f"{label}: file not found — {raw.strip()}")
 
-    for opt_label, opt_val, opt_raw in [
-        ("Association R2", assoc_r2_path, assoc_r2_str),
-        ("Labels TSV",     labels_path,   labels_path_str),
-    ]:
-        if opt_raw.strip() and not opt_val:
-            st.warning(f"{opt_label}: file not found — {opt_raw.strip()}")
+        for opt_label, opt_val, opt_raw in [
+            ("Association R2", assoc_r2_path, assoc_r2_str),
+            ("Labels TSV",     labels_path,   labels_path_str),
+        ]:
+            if opt_raw.strip() and not opt_val:
+                st.warning(f"{opt_label}: file not found — {opt_raw.strip()}")
 
-    if assoc_bc_str.strip() and not assoc_bc_path:
-        st.error(f"Barcode index FASTQ: file not found — {assoc_bc_str.strip()}")
+        if assoc_bc_str.strip() and not assoc_bc_path:
+            st.error(f"Barcode index FASTQ: file not found — {assoc_bc_str.strip()}")
 
-    if rna_paths_str.strip():
-        for s in rna_paths_str.split(","):
-            if s.strip() and not _resolve(s):
-                st.error(f"RNA FASTQ not found: {s.strip()}")
+        if rna_paths_str.strip():
+            for s in rna_paths_str.split(","):
+                if s.strip() and not _resolve(s):
+                    st.error(f"RNA FASTQ not found: {s.strip()}")
 
-    # Check whether R1 headers contain embedded barcodes (i5 format)
-    _r1_has_header_bc = False
-    if assoc_r1_path:
-        try:
-            import gzip as _gz
-            _opener = _gz.open if str(assoc_r1_path).endswith(".gz") else open
-            with _opener(assoc_r1_path, "rt") as _fh:
-                _hdr = _fh.readline()
-                _parts = _hdr.split()
-                if len(_parts) >= 2 and "+" in _parts[1].split(":")[-1]:
-                    _r1_has_header_bc = True
-        except Exception:
-            pass
+        # Check whether R1 headers contain embedded barcodes (i5 format)
+        _r1_has_header_bc = False
+        if assoc_r1_path:
+            try:
+                import gzip as _gz
+                _opener = _gz.open if str(assoc_r1_path).endswith(".gz") else open
+                with _opener(assoc_r1_path, "rt") as _fh:
+                    _hdr = _fh.readline()
+                    _parts = _hdr.split()
+                    if len(_parts) >= 2 and "+" in _parts[1].split(":")[-1]:
+                        _r1_has_header_bc = True
+            except Exception:
+                pass
 
-    _bc_required = not _r1_has_header_bc
-    if _bc_required and not assoc_bc_path:
-        st.info("Barcode index FASTQ required — R1 headers don't contain embedded barcodes (ENCODE format).")
+        _bc_required = not _r1_has_header_bc
+        if _bc_required and not assoc_bc_path:
+            st.info("Barcode index FASTQ required — R1 headers don't contain embedded barcodes (ENCODE format).")
+    else:
+        _r1_has_header_bc = False
 
     # ── Process button ───────────────────────────────────────────────────────
-    ready = bool(
-        assoc_r1_path and design_fasta and dna_path and len(rna_paths) > 0
-        and (assoc_bc_path or _r1_has_header_bc)
-    )
-    if not ready:
-        missing = [n for n, v in [
-            ("Association R1",    assoc_r1_path),
-            ("Barcode index FASTQ", assoc_bc_path or (_r1_has_header_bc or None)),
-            ("Design FASTA",      design_fasta),
-            ("DNA FASTQ",         dna_path),
-            ("RNA FASTQs",        rna_paths or None),
-        ] if not v]
-        if missing:
-            st.info(f"Still needed: {', '.join(missing)}")
+    if skip_assoc:
+        ready = bool(existing_mapping_path and dna_path and len(rna_paths) > 0)
+        if not ready:
+            missing = [n for n, v in [
+                ("Mapping table", existing_mapping_path),
+                ("DNA FASTQ",     dna_path),
+                ("RNA FASTQs",    rna_paths or None),
+            ] if not v]
+            if missing:
+                st.info(f"Still needed: {', '.join(missing)}")
+    else:
+        ready = bool(
+            assoc_r1_path and design_fasta and dna_path and len(rna_paths) > 0
+            and (assoc_bc_path or _r1_has_header_bc)
+        )
+        if not ready:
+            missing = [n for n, v in [
+                ("Association R1",     assoc_r1_path),
+                ("Barcode index FASTQ", assoc_bc_path or (_r1_has_header_bc or None)),
+                ("Design FASTA",       design_fasta),
+                ("DNA FASTQ",          dna_path),
+                ("RNA FASTQs",         rna_paths or None),
+            ] if not v]
+            if missing:
+                st.info(f"Still needed: {', '.join(missing)}")
 
     if st.button("▶ Process all files", type="primary", use_container_width=True, disabled=not ready):
         from creseq_mcp.processing.association import run_association
@@ -233,18 +263,24 @@ if page == "📤 Upload":
 
         progress = st.progress(0, text="Step 1/4 — Association (mappy + STARCODE)…")
         try:
-            assoc_stats = run_association(
-                fastq_r1=assoc_r1_path,
-                design_fasta=design_fasta,
-                outdir=UPLOAD_DIR,
-                fastq_r2=assoc_r2_path,
-                fastq_bc=assoc_bc_path,
-                labels_path=labels_path,
-                min_cov=int(min_cov),
-                min_frac=float(min_frac),
-                mapq_threshold=int(mapq_thr),
-            )
-            progress.progress(25, text="Steps 2+3 — DNA and RNA counting (parallel)…")
+            if skip_assoc:
+                import shutil as _shutil
+                _shutil.copy(existing_mapping_path, UPLOAD_DIR / "mapping_table.tsv")
+                assoc_stats = None
+                progress.progress(25, text="Steps 2+3 — DNA and RNA counting (parallel)…")
+            else:
+                assoc_stats = run_association(
+                    fastq_r1=assoc_r1_path,
+                    design_fasta=design_fasta,
+                    outdir=UPLOAD_DIR,
+                    fastq_r2=assoc_r2_path,
+                    fastq_bc=assoc_bc_path,
+                    labels_path=labels_path,
+                    min_cov=int(min_cov),
+                    min_frac=float(min_frac),
+                    mapq_threshold=int(mapq_thr),
+                )
+                progress.progress(25, text="Steps 2+3 — DNA and RNA counting (parallel)…")
 
             from concurrent.futures import ThreadPoolExecutor
             _mapping_table = UPLOAD_DIR / "mapping_table.tsv"
@@ -273,13 +309,18 @@ if page == "📤 Upload":
 
             st.success("All steps complete — go to Chat to run QC or QC & Plots to see results.")
             c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Reads (assoc)", f"{assoc_stats['n_reads_total']:,}")
-            c2.metric("Aligned", f"{assoc_stats['pct_aligned']:.1f}%")
-            c3.metric("Barcodes (filtered)", f"{assoc_stats['n_barcodes_passing_filter']:,}")
+            if assoc_stats:
+                c1.metric("Reads (assoc)", f"{assoc_stats['n_reads_total']:,}")
+                c2.metric("Aligned", f"{assoc_stats['pct_aligned']:.1f}%")
+                c3.metric("Barcodes (filtered)", f"{assoc_stats['n_barcodes_passing_filter']:,}")
+            else:
+                c1.metric("Reads (assoc)", "—")
+                c2.metric("Aligned", "—")
+                c3.metric("Barcodes (filtered)", "—")
             c4.metric("RNA replicates", len(rna_stats["replicates"]))
             c5.metric("Active CREs", f"{act_summary['n_active']:,}")
 
-            if assoc_stats.get("warnings"):
+            if assoc_stats and assoc_stats.get("warnings"):
                 for w in assoc_stats["warnings"]:
                     st.warning(w)
 
