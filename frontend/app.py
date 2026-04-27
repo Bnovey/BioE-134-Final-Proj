@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
+import json
+import math
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import anthropic
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
 from pathlib import Path
 
 UPLOAD_DIR = Path.home() / "Desktop" / "creseq_outputs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = str(UPLOAD_DIR)
+PROJECT_ROOT = str(Path(__file__).parent.parent)
+PAPER_PATH = Path(PROJECT_ROOT) / "creseq_mcp" / "data" / "papers" / "agarwal2025_lentimpra.txt"
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -34,6 +44,8 @@ if "data" not in st.session_state:
     st.session_state.data: pd.DataFrame = _load_results()
 if "analysis_run" not in st.session_state:
     st.session_state.analysis_run: bool = (UPLOAD_DIR / "activity_results.tsv").exists()
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages: list = []
 
 # ── sidebar nav ───────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -42,7 +54,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Navigation",
-        ["📤 Upload", "📊 QC & Plots", "📋 Results"],
+        ["📤 Upload", "📊 QC & Plots", "📋 Results", "💬 Chat"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -334,8 +346,176 @@ if page == "📤 Upload":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CHAT HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _run_async(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def _load_paper_excerpt(max_chars: int = 4000) -> str:
+    try:
+        return PAPER_PATH.read_text()[:max_chars]
+    except FileNotFoundError:
+        return ""
+
+
+def _build_system_prompt() -> str:
+    paper = _load_paper_excerpt()
+    return f"""You are a bioinformatics assistant for lentiMPRA/CRE-seq analysis.
+Default output directory: {OUTPUT_DIR}
+
+## Agarwal et al. 2025 (Nature) — Context
+{paper}
+
+## Common workflows
+- "run library QC"       → tool_library_summary_report
+- "call active elements" → tool_call_active_elements_full
+- "annotate motifs"      → tool_motif_enrichment_summary
+- "show volcano plot"    → tool_plot_creseq with plot_type="volcano"
+- "rank CREs"            → tool_rank_cre_candidates
+
+When no paths are given, assume files are in {OUTPUT_DIR}/. Explain results in plain language."""
+
+
+def _extract_charts(tool_name: str, result_text: str, charts: list, images: list) -> None:
+    try:
+        data = json.loads(result_text)
+    except (json.JSONDecodeError, TypeError):
+        return
+
+    rows = data.get("rows") if isinstance(data, dict) else (data if isinstance(data, list) else None)
+    if rows and isinstance(rows, list) and rows and "mean_activity" in rows[0] and "pvalue" in rows[0]:
+        x = [r.get("mean_activity", 0) for r in rows]
+        y = [-math.log10(max(r.get("pvalue", 1), 1e-300)) for r in rows]
+        colors = ["#e74c3c" if r.get("active") else "#95a5a6" for r in rows]
+        fig = go.Figure(go.Scatter(
+            x=x, y=y, mode="markers",
+            marker=dict(color=colors, size=5, opacity=0.7),
+            text=[r.get("element_id", "") for r in rows],
+            hovertemplate="%{text}<br>log₂=%{x:.2f}<br>-log₁₀p=%{y:.2f}<extra></extra>",
+        ))
+        fig.add_vline(x=1.0, line_dash="dash", line_color="gray", opacity=0.6)
+        fig.add_hline(y=-math.log10(0.05), line_dash="dash", line_color="gray", opacity=0.6)
+        fig.update_layout(title="Volcano Plot", xaxis_title="log₂ Activity",
+                          yaxis_title="-log₁₀(p-value)", height=480)
+        charts.append(fig)
+
+    elif tool_name == "tool_motif_enrichment_summary" and isinstance(data, dict):
+        motifs = data.get("top_motifs", data.get("motifs", []))[:15]
+        if motifs:
+            names = [m.get("motif", m.get("tf_name", "")) for m in motifs]
+            ratios = [m.get("enrichment_ratio", m.get("odds_ratio", 0)) for m in motifs]
+            colors = ["#e74c3c" if r >= 2 else "#3498db" for r in ratios]
+            fig = go.Figure(go.Bar(x=ratios, y=names, orientation="h", marker_color=colors))
+            fig.update_layout(title="Top Enriched TF Motifs", xaxis_title="Enrichment Ratio",
+                              height=max(300, len(names) * 25 + 100),
+                              yaxis=dict(autorange="reversed"))
+            charts.append(fig)
+
+    elif tool_name == "tool_plot_creseq" and isinstance(data, dict) and "plot_path" in data:
+        if Path(data["plot_path"]).exists():
+            images.append(data["plot_path"])
+
+
+async def _agent_turn(user_text: str, history: list) -> dict:
+    server_params = StdioServerParameters(
+        command="python", args=["-m", "creseq_mcp.server"], cwd=PROJECT_ROOT
+    )
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools_result = await session.list_tools()
+            tools = [
+                {"name": t.name, "description": t.description or "", "input_schema": t.inputSchema}
+                for t in tools_result.tools
+            ]
+            client = anthropic.AsyncAnthropic()
+            messages = list(history) + [{"role": "user", "content": user_text}]
+            charts: list = []
+            images: list = []
+
+            while True:
+                response = await client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=4096,
+                    system=_build_system_prompt(),
+                    tools=tools,
+                    messages=messages,
+                )
+                if response.stop_reason == "end_turn":
+                    text = next((b.text for b in response.content if hasattr(b, "text")), "")
+                    return {"text": text, "charts": charts, "images": images}
+
+                if response.stop_reason == "tool_use":
+                    messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
+                    tool_results = []
+                    for block in response.content:
+                        if block.type != "tool_use":
+                            continue
+                        result = await session.call_tool(block.name, block.input)
+                        result_text = result.content[0].text if result.content else "{}"
+                        _extract_charts(block.name, result_text, charts, images)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result_text,
+                        })
+                    messages.append({"role": "user", "content": tool_results})
+                else:
+                    break
+
+    return {"text": "", "charts": charts, "images": images}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PAGE: CHAT
 # ══════════════════════════════════════════════════════════════════════════════
+if page == "💬 Chat":
+    st.header("CRE-seq Assistant")
+    st.caption("Ask questions or trigger pipeline tools via Claude + MCP")
+
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            if msg["content"]:
+                st.markdown(msg["content"])
+            for fig in msg.get("charts", []):
+                st.plotly_chart(fig, use_container_width=True)
+            for img_path in msg.get("images", []):
+                st.image(img_path)
+
+    if prompt := st.chat_input("Run library QC, annotate motifs, show volcano plot…"):
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        st.session_state.chat_messages.append(
+            {"role": "user", "content": prompt, "charts": [], "images": []}
+        )
+
+        api_history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.chat_messages[:-1]
+        ]
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking…"):
+                result = _run_async(_agent_turn(prompt, api_history))
+            if result["text"]:
+                st.markdown(result["text"])
+            for fig in result["charts"]:
+                st.plotly_chart(fig, use_container_width=True)
+            for img_path in result["images"]:
+                st.image(img_path)
+
+        st.session_state.chat_messages.append({
+            "role": "assistant",
+            "content": result["text"],
+            "charts": result["charts"],
+            "images": result["images"],
+        })
 
 
 # ══════════════════════════════════════════════════════════════════════════════
