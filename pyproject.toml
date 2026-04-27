@@ -18,6 +18,10 @@ dependencies = [
     "seaborn>=0.12",
     "pyjaspar>=4.0.0",
     "biopython>=1.80",
+    "chainlit>=2.0",
+    "plotly>=5.0",
+    "streamlit>=1.30",
+    "anthropic>=0.40.0",
 ]
 
 [tool.pytest.ini_options]
