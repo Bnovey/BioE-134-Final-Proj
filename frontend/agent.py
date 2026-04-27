@@ -28,13 +28,9 @@ from creseq_mcp.qc.library import (
     variant_family_coverage,
 )
 from creseq_mcp.stats.library import (
-    normalize_activity,
-    call_active_elements,
     rank_cre_candidates,
     motif_enrichment_summary,
     prepare_rag_context,
-    count_barcodes_from_fastq,
-    aggregate_fastq_counts_to_elements,
     search_pubmed,
     search_jaspar_motif,
     search_encode_tf,
@@ -271,43 +267,6 @@ _TOOLS: list[dict] = [
         },
     },
     {
-        "name": "tool_normalize_activity",
-        "description": (
-            "Compute log2 RNA/DNA activity scores from an element-level count table. "
-            "Expects columns: element_id (or oligo_id), dna_counts, rna_counts. "
-            "Use tool_activity_report for our standard plasmid/RNA count files."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "count_table_path": {"type": "string", "description": "Path to count table with dna_counts and rna_counts columns"},
-                "pseudocount": {"type": "number", "description": "Pseudocount added before log2 (default 1.0)"},
-                "dna_col": {"type": "string", "description": "DNA count column name (default 'dna_counts')"},
-                "rna_col": {"type": "string", "description": "RNA count column name (default 'rna_counts')"},
-                "element_col": {"type": "string", "description": "Element ID column name (default 'element_id', use 'oligo_id' for our data)"},
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "tool_call_active_elements",
-        "description": (
-            "Classify active CREs from activity_results.tsv using an empirical negative-control background. "
-            "Computes z-scores, p-values, and BH FDR. Works on our activity_results.tsv (log2_ratio column)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "activity_table_path": {"type": "string", "description": "Path to activity table (default: activity_results.tsv)"},
-                "activity_col": {"type": "string", "description": "Activity column name (default 'log2_ratio' for our data)"},
-                "category_col": {"type": "string", "description": "Category column for negative controls (default 'designed_category')"},
-                "activity_threshold": {"type": "number", "description": "log2 activity threshold for calling active (default 1.0)"},
-                "fdr_threshold": {"type": "number", "description": "BH FDR threshold (default 0.05)"},
-            },
-            "required": [],
-        },
-    },
-    {
         "name": "tool_rank_cre_candidates",
         "description": (
             "Rank CRE candidates by activity strength and statistical confidence. "
@@ -357,40 +316,6 @@ _TOOLS: list[dict] = [
                 "off_target_cell_type": {"type": "string", "description": "Off-target cell type to exclude from queries"},
             },
             "required": [],
-        },
-    },
-    {
-        "name": "tool_count_barcodes_from_fastq",
-        "description": (
-            "Count fixed-position barcodes from a raw FASTQ file. "
-            "Returns a barcode count table. Useful for quick barcode tallies before full pipeline."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "fastq_path": {"type": "string", "description": "Path to FASTQ or FASTQ.gz file"},
-                "barcode_start": {"type": "integer", "description": "Start position of barcode in read (default 0)"},
-                "barcode_length": {"type": "integer", "description": "Length of barcode (default 10)"},
-                "max_reads": {"type": "integer", "description": "Maximum reads to process (optional, for quick checks)"},
-            },
-            "required": ["fastq_path"],
-        },
-    },
-    {
-        "name": "tool_aggregate_fastq_counts_to_elements",
-        "description": (
-            "Convert raw barcode count tables into element-level DNA/RNA counts. "
-            "Joins DNA barcode counts + RNA barcode counts with barcode-to-oligo map. "
-            "Use after tool_count_barcodes_from_fastq."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "dna_barcode_counts_path": {"type": "string", "description": "Path to DNA barcode count table (barcode, count)"},
-                "rna_barcode_counts_path": {"type": "string", "description": "Path to RNA barcode count table (barcode, count)"},
-                "barcode_map_path": {"type": "string", "description": "Path to barcode→oligo mapping table"},
-            },
-            "required": ["dna_barcode_counts_path", "rna_barcode_counts_path", "barcode_map_path"],
         },
     },
     {
@@ -528,20 +453,6 @@ _DISPATCH: dict[str, Any] = {
         _p(a, "design_manifest_path", "design_manifest.tsv"),
         upload_dir=UPLOAD_DIR,
     ),
-    "tool_normalize_activity": lambda a: normalize_activity(
-        a["count_table_path"],
-        pseudocount=a.get("pseudocount", 1.0),
-        dna_col=a.get("dna_col", "dna_counts"),
-        rna_col=a.get("rna_col", "rna_counts"),
-        element_col=a.get("element_col", "element_id"),
-    ),
-    "tool_call_active_elements": lambda a: call_active_elements(
-        _p(a, "activity_table_path", "activity_results.tsv"),
-        activity_col=a.get("activity_col", "log2_ratio"),
-        category_col=a.get("category_col", "designed_category"),
-        activity_threshold=a.get("activity_threshold", 1.0),
-        fdr_threshold=a.get("fdr_threshold", 0.05),
-    ),
     "tool_rank_cre_candidates": lambda a: rank_cre_candidates(
         _p(a, "activity_table_path", "activity_results.tsv"),
         top_n=a.get("top_n", 20),
@@ -558,17 +469,6 @@ _DISPATCH: dict[str, Any] = {
         top_n=a.get("top_n", 10),
         target_cell_type=a.get("target_cell_type"),
         off_target_cell_type=a.get("off_target_cell_type"),
-    ),
-    "tool_count_barcodes_from_fastq": lambda a: count_barcodes_from_fastq(
-        a["fastq_path"],
-        barcode_start=a.get("barcode_start", 0),
-        barcode_length=a.get("barcode_length", 10),
-        max_reads=a.get("max_reads"),
-    ),
-    "tool_aggregate_fastq_counts_to_elements": lambda a: aggregate_fastq_counts_to_elements(
-        a["dna_barcode_counts_path"],
-        a["rna_barcode_counts_path"],
-        a["barcode_map_path"],
     ),
     "tool_search_pubmed": lambda a: search_pubmed(
         a["query"],

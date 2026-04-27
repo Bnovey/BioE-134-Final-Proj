@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import os
+import time
 
 import numpy as np
 import pandas as pd
@@ -13,6 +15,15 @@ import streamlit as st
 from pathlib import Path
 UPLOAD_DIR = Path.home() / "Desktop" / "creseq_outputs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+try:
+    from agent import ClaudeQCAgent, is_available as _agent_available
+    _AGENT_READY = True
+except ImportError:
+    _AGENT_READY = False
+    _agent_available = lambda: False
+
+from agent_stub import query_agent as stub_query_agent
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -25,6 +36,20 @@ st.set_page_config(
 # ── session state defaults ────────────────────────────────────────────────────
 if "qc_report" not in st.session_state:
     st.session_state.qc_report = None
+if "messages" not in st.session_state:
+    st.session_state.messages: list[dict] = [
+        {
+            "role": "assistant",
+            "content": (
+                "Hello! I'm the CRE-seq agent. I can run **QC**, **activity calling**, "
+                "**motif enrichment**, **variant delta scores**, and literature search.\n\n"
+                "Type **help** to see all available tools, or just describe what you want."
+            ),
+            "tools": [],
+        }
+    ]
+if "agent" not in st.session_state:
+    st.session_state.agent = None
 
 # ── sidebar nav ───────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -33,7 +58,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Navigation",
-        ["📤 Upload", "📊 QC & Plots", "📋 Results"],
+        ["📤 Upload", "💬 Chat", "📊 QC & Plots", "📋 Results"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -339,6 +364,58 @@ if page == "📤 Upload":
         else:
             col.warning(f"**{label}**")
 
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: CHAT
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "💬 Chat":
+    st.header("MCP Agent Chat")
+    st.caption("The agent dispatches real CRE-seq tools based on your request.")
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            for tool in msg.get("tools", []):
+                st.info(f"🔧 Tool called: `{tool}`")
+
+    if prompt := st.chat_input("Ask the agent… (e.g. 'run QC', 'call active elements')"):
+        st.session_state.messages.append({"role": "user", "content": prompt, "tools": []})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Agent thinking…"):
+                if _AGENT_READY and _agent_available():
+                    if st.session_state.agent is None:
+                        st.session_state.agent = ClaudeQCAgent(os.environ["ANTHROPIC_API_KEY"])
+                    response = st.session_state.agent.send_message(prompt)
+                else:
+                    time.sleep(0.4)
+                    response = stub_query_agent(prompt, has_data=True)
+            st.markdown(response.text)
+            for tool in response.tools_called:
+                st.info(f"🔧 Tool called: `{tool}`")
+
+        st.session_state.messages.append(
+            {"role": "assistant", "content": response.text, "tools": response.tools_called}
+        )
+
+    with st.sidebar:
+        st.divider()
+        if _AGENT_READY and _agent_available():
+            st.success("Claude connected", icon="✅")
+        else:
+            st.warning("Set ANTHROPIC_API_KEY to enable real tools", icon="⚠️")
+        st.divider()
+        if st.button("🗑 Clear chat", use_container_width=True):
+            st.session_state.messages = [
+                {"role": "assistant", "content": "Chat cleared. How can I help?", "tools": []}
+            ]
+            if st.session_state.agent is not None:
+                st.session_state.agent.reset()
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
