@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import io
-import os
-import time
 
 import numpy as np
 import pandas as pd
@@ -12,19 +10,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from agent_stub import query_agent as stub_query_agent
-from mock_data import get_demo_data
-
 from pathlib import Path
 UPLOAD_DIR = Path.home() / "Desktop" / "creseq_outputs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-try:
-    from agent import ClaudeQCAgent, is_available as _gemini_available
-    _GEMINI_READY = True
-except ImportError:
-    _GEMINI_READY = False
-    _gemini_available = lambda: False
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -35,32 +23,8 @@ st.set_page_config(
 )
 
 # ── session state defaults ────────────────────────────────────────────────────
-if "data" not in st.session_state:
-    st.session_state.data: pd.DataFrame = get_demo_data()
-if "data_source" not in st.session_state:
-    st.session_state.data_source: str = "demo"
-if "analysis_run" not in st.session_state:
-    st.session_state.analysis_run: bool = True
-if "messages" not in st.session_state:
-    st.session_state.messages: list[dict] = [
-        {
-            "role": "assistant",
-            "content": (
-                "Hello! I'm the CRE-seq MCP agent. I can run **QC**, **normalization**, "
-                "**activity calling**, **motif enrichment**, **variant effect prediction**, "
-                "and more.\n\nType **help** to see all available tools, or just describe what you want."
-            ),
-            "tools": [],
-        }
-    ]
-if "gemini_agent" not in st.session_state:
-    st.session_state.gemini_agent = None
-if "file_paths" not in st.session_state:
-    st.session_state.file_paths: dict[str, str] = {
-        "mapping_table_path": "",
-        "plasmid_count_path": "",
-        "design_manifest_path": "",
-    }
+if "qc_report" not in st.session_state:
+    st.session_state.qc_report = None
 
 # ── sidebar nav ───────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -69,19 +33,15 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Navigation",
-        ["📤 Upload", "💬 Chat", "📊 QC & Plots", "📋 Results"],
+        ["📤 Upload", "📊 QC & Plots", "📋 Results"],
         label_visibility="collapsed",
     )
     st.divider()
-    st.markdown("**Data source**")
-    source_label = "Demo data" if st.session_state.data_source == "demo" else "Uploaded file"
-    st.info(f"**{source_label}** · {len(st.session_state.data):,} elements")
-    if st.session_state.data_source != "demo":
-        if st.button("Reset to demo data", use_container_width=True):
-            st.session_state.data = get_demo_data()
-            st.session_state.data_source = "demo"
-            st.session_state.analysis_run = True
-            st.rerun()
+    _act_exists = (UPLOAD_DIR / "activity_results.tsv").exists()
+    if _act_exists:
+        st.success("Pipeline output ready", icon="✅")
+    else:
+        st.info("Run the pipeline on Upload page to generate results.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -382,70 +342,10 @@ if page == "📤 Upload":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAGE: CHAT
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "💬 Chat":
-    st.header("MCP Agent Chat")
-    st.caption("The agent dispatches MCP tools based on your request.")
-
-    # render history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            for tool in msg.get("tools", []):
-                st.info(f"🔧 Tool called: `{tool}`")
-
-    # input
-    if prompt := st.chat_input("Ask the agent… (e.g. 'run QC', 'find enriched motifs')"):
-        st.session_state.messages.append({"role": "user", "content": prompt, "tools": []})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Agent thinking…"):
-                if _GEMINI_READY and _gemini_available():
-                    if st.session_state.gemini_agent is None:
-                        st.session_state.gemini_agent = ClaudeQCAgent(
-                            os.environ["ANTHROPIC_API_KEY"]
-                        )
-                    response = st.session_state.gemini_agent.send_message(prompt)
-                else:
-                    time.sleep(0.4)
-                    response = stub_query_agent(prompt, has_data=True)
-            st.markdown(response.text)
-            for tool in response.tools_called:
-                st.info(f"🔧 Tool called: `{tool}`")
-
-        st.session_state.messages.append(
-            {"role": "assistant", "content": response.text, "tools": response.tools_called}
-        )
-
-    with st.sidebar:
-        st.divider()
-        if _GEMINI_READY and _gemini_available():
-            st.success("Claude connected", icon="✅")
-        else:
-            st.warning("Set ANTHROPIC_API_KEY to enable real QC tools", icon="⚠️")
-        st.divider()
-        if st.button("🗑 Clear chat", use_container_width=True):
-            st.session_state.messages = [
-                {
-                    "role": "assistant",
-                    "content": "Chat cleared. How can I help?",
-                    "tools": [],
-                }
-            ]
-            if st.session_state.gemini_agent is not None:
-                st.session_state.gemini_agent.reset()
-            st.rerun()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # PAGE: QC & PLOTS
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📊 QC & Plots":
     st.header("QC & Analysis Plots")
-    df = st.session_state.data
 
     tab_qc, tab_activity, tab_motif, tab_variant = st.tabs(
         ["🔬 Library QC", "📈 Activity Plots", "🔡 Motif Analysis", "🧪 Variant Effects"]
@@ -576,18 +476,12 @@ elif page == "📊 QC & Plots":
     # ── Activity Plots ──────────────────────────────────────────────────────
     with tab_activity:
         _act_path = UPLOAD_DIR / "activity_results.tsv"
-        if _act_path.exists():
-            act_df = pd.read_csv(_act_path, sep="\t")
-            if "oligo_id" in act_df.columns and "element_id" not in act_df.columns:
-                act_df = act_df.rename(columns={"oligo_id": "element_id"})
-            st.info("Showing real activity data from activity_results.tsv", icon="✅")
-        else:
-            act_df = df
-            st.info(
-                "No activity results yet — showing demo data. "
-                "Complete all four Upload steps to see real results.",
-                icon="ℹ️",
-            )
+        if not _act_path.exists():
+            st.info("No activity results yet — complete the Upload pipeline first.", icon="ℹ️")
+            st.stop()
+        act_df = pd.read_csv(_act_path, sep="\t")
+        if "oligo_id" in act_df.columns and "element_id" not in act_df.columns:
+            act_df = act_df.rename(columns={"oligo_id": "element_id"})
 
         n_active = int(act_df["active"].sum()) if "active" in act_df.columns else 0
         n_inactive = len(act_df) - n_active
@@ -649,21 +543,6 @@ elif page == "📊 QC & Plots":
                 barmode="stack",
                 title="Active vs. Inactive by Element Category",
                 labels={"designed_category": "Category", "count": "Elements", "active": "Active"},
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        elif "chromatin_state" in act_df.columns:
-            state_counts = (
-                act_df.groupby(["chromatin_state", "active"])
-                .size()
-                .reset_index(name="count")
-            )
-            fig = px.bar(
-                state_counts, x="chromatin_state", y="count",
-                color="active",
-                color_discrete_map={True: "#E45756", False: "#72B7B2"},
-                barmode="stack",
-                title="Active vs. Inactive CREs by Chromatin State",
-                labels={"chromatin_state": "Chromatin State", "count": "Elements", "active": "Active"},
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -788,10 +667,15 @@ elif page == "📊 QC & Plots":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📋 Results":
     st.header("Analysis Results")
-    df = st.session_state.data
 
-    if not st.session_state.analysis_run:
-        st.warning("Analysis has not been run yet. Go to **Upload** and click **Run Analysis**.")
+    _res_path = UPLOAD_DIR / "activity_results.tsv"
+    if not _res_path.exists():
+        st.info("No results yet — complete the Upload pipeline first.", icon="ℹ️")
+        st.stop()
+
+    df = pd.read_csv(_res_path, sep="\t")
+    if "oligo_id" in df.columns and "element_id" not in df.columns:
+        df = df.rename(columns={"oligo_id": "element_id"})
 
     col1, col2, col3, col4 = st.columns(4)
     n_active = int(df["active"].sum()) if "active" in df.columns else 0
@@ -805,7 +689,7 @@ elif page == "📋 Results":
 
     st.subheader("Element Summary Table")
 
-    display_cols = [c for c in ["element_id", "chrom", "start", "end", "dna_counts", "rna_counts", "log2_ratio", "pval", "active", "chromatin_state", "top_motif"] if c in df.columns]
+    display_cols = [c for c in ["element_id", "oligo_id", "log2_ratio", "pvalue", "fdr", "zscore", "fold_over_controls", "active", "designed_category", "n_barcodes"] if c in df.columns]
 
     filter_active = st.checkbox("Show active elements only", value=False)
     display_df = df[df["active"]] if filter_active and "active" in df.columns else df
@@ -816,44 +700,18 @@ elif page == "📋 Results":
         column_config={
             "active": st.column_config.CheckboxColumn("Active"),
             "log2_ratio": st.column_config.NumberColumn("log₂ ratio", format="%.3f"),
-            "pval": st.column_config.NumberColumn("p-value", format="%.4f"),
+            "pvalue": st.column_config.NumberColumn("p-value", format="%.4f"),
+            "fdr": st.column_config.NumberColumn("FDR", format="%.4f"),
+            "zscore": st.column_config.NumberColumn("Z-score", format="%.2f"),
+            "fold_over_controls": st.column_config.NumberColumn("Fold over ctrl", format="%.2f"),
         },
     )
-
-    st.divider()
-
-    with st.expander("📌 Enrichment Summary"):
-        st.markdown(
-            """
-**Chromatin state enrichment** (active vs. inactive CREs):
-- Active Enhancer: OR = 3.2, p < 0.001 ✅
-- Promoter-flanking: OR = 1.8, p = 0.021 ✅
-- Heterochromatin: OR = 0.2, p < 0.001 (depleted)
-
-**Top enriched TF motifs:**
-- SP1 (2.8×), AP1/FOSL2 (2.1×), NRF1 (1.9×)
-
-**Regulatory variants:** 7 elements with allele-specific activity; 3 overlap eQTLs.
-"""
-        )
-
-    with st.expander("🧮 Statistical Model"):
-        st.markdown(
-            """
-Activity was called using a negative binomial GLM (DESeq2-style):
-
-- Size factors computed per sample using median-of-ratios
-- Dispersion estimated via empirical Bayes shrinkage
-- Hypothesis test: active vs. scrambled negative controls
-- Multiple testing correction: Benjamini–Hochberg (FDR < 5%)
-"""
-        )
 
     st.divider()
     csv_buffer = io.StringIO()
     display_df[display_cols].to_csv(csv_buffer, index=False)
     st.download_button(
-        label="⬇ Download results as CSV",
+        label="Download results as CSV",
         data=csv_buffer.getvalue(),
         file_name="cre_seq_results.csv",
         mime="text/csv",

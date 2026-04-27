@@ -8,14 +8,13 @@ Steps
 1. RPM-style size-factor normalization (per sample)
 2. log2(RNA/DNA) per barcode, averaged across replicates
 3. Collapse to per-oligo median (requiring min_barcodes)
-4. Activity calling: z-test vs. negative control distribution → BH FDR
+4. Activity calling: Sarrah's empirical null (median/MAD, BH FDR)
    Falls back to log2_ratio > 1 threshold when controls are absent.
 """
 from __future__ import annotations
 
 import logging
 import re
-from math import erfc, sqrt
 from pathlib import Path
 
 import numpy as np
@@ -24,24 +23,6 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 _PSEUDO = 0.5  # pseudocount added before log2
-
-
-def _norm_sf(z: float) -> float:
-    """One-sided p-value (upper tail) for a standard-normal z-score."""
-    return 0.5 * erfc(z / sqrt(2))
-
-
-def _bh_fdr(pvals: list[float]) -> np.ndarray:
-    """Benjamini-Hochberg FDR correction — no external dependencies."""
-    n = len(pvals)
-    arr = np.array(pvals, dtype=float)
-    order = np.argsort(arr)
-    ranked = arr[order] * n / (np.arange(n) + 1)
-    for i in range(n - 2, -1, -1):
-        ranked[i] = min(ranked[i], ranked[i + 1])
-    result = np.empty(n)
-    result[order] = np.clip(ranked, 0, 1)
-    return result
 
 
 def normalize_and_compute_ratios(
@@ -105,53 +86,52 @@ def normalize_and_compute_ratios(
     }
 
 
-def call_activity(
+def _call_activity(
     oligo_df: pd.DataFrame,
     *,
     neg_ctrl_category: str = "negative_control",
     fdr_threshold: float = 0.05,
 ) -> tuple[pd.DataFrame, dict]:
     """
-    Call active CREs relative to negative control distribution.
-    Falls back to log2_ratio > 1 threshold when controls are absent.
+    Classify CREs using Sarrah's empirical null (median/MAD + BH FDR).
+    Falls back to log2_ratio > 1 when <3 controls are present.
     """
+    from creseq_mcp.activity_calling import call_active_elements_empirical
+
     df = oligo_df.copy()
 
-    neg_ratios = pd.Series([], dtype=float)
+    # Build the element_id / mean_activity columns Sarrah's function expects.
+    activity_table = df.rename(columns={"oligo_id": "element_id", "log2_ratio": "mean_activity"})
+    if "n_barcodes" not in activity_table.columns:
+        activity_table["n_barcodes"] = pd.NA
+
+    neg_ctrl_ids: list[str] = []
     if "designed_category" in df.columns:
-        neg_mask = df["designed_category"] == neg_ctrl_category
-        neg_ratios = df.loc[neg_mask, "log2_ratio"].dropna()
+        neg_ctrl_ids = (
+            df.loc[df["designed_category"] == neg_ctrl_category, "oligo_id"]
+            .dropna()
+            .tolist()
+        )
 
-    if len(neg_ratios) >= 3:
-        neg_mean = float(neg_ratios.mean())
-        neg_std = max(float(neg_ratios.std()), 1e-9)
-
-        pvals = [_norm_sf((r - neg_mean) / neg_std) for r in df["log2_ratio"]]
-        fdrs = _bh_fdr(pvals)
-        df["pval"] = pvals
-        df["fdr"] = fdrs
-        df["active"] = df["fdr"] < fdr_threshold
-
-        warnings_list: list[str] = []
-        if len(neg_ratios) < 20:
-            warnings_list.append(
-                f"Only {len(neg_ratios)} negative controls available; the null "
-                f"distribution is underpowered (recommend ≥20). FDR estimates "
-                f"may be unreliable."
-            )
-
+    if len(neg_ctrl_ids) >= 3:
+        classified, summary = call_active_elements_empirical(
+            activity_table, neg_ctrl_ids, fdr_threshold
+        )
+        # Map results back onto oligo_df using oligo_id.
+        classified = classified.rename(columns={"element_id": "oligo_id", "mean_activity": "log2_ratio"})
+        keep_cols = [c for c in ("active", "pvalue", "fdr", "zscore", "fold_over_controls") if c in classified.columns]
+        df = df.merge(classified[["oligo_id"] + keep_cols], on="oligo_id", how="left")
         return df, {
-            "method": "z_test_vs_neg_ctrl",
-            "n_neg_controls": int(neg_mask.sum()),
-            "neg_ctrl_mean_log2": round(neg_mean, 4),
+            "method": "empirical_median_mad",
+            "n_neg_controls": len(neg_ctrl_ids),
             "fdr_threshold": fdr_threshold,
             "n_active": int(df["active"].sum()),
             "n_inactive": int((~df["active"]).sum()),
             "activity_rate": round(float(df["active"].mean()), 4),
-            "warnings": warnings_list,
+            "warnings": summary.get("warnings", []),
         }
 
-    df["pval"] = np.nan
+    df["pvalue"] = np.nan
     df["fdr"] = np.nan
     df["active"] = df["log2_ratio"] > 1.0
     return df, {
@@ -309,11 +289,11 @@ def activity_report(
     design_manifest_path: str | Path | None = None,
     upload_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    """Full pipeline: normalize → call activity → optionally save activity_results.tsv."""
+    """Full pipeline: normalize → Sarrah's empirical classifier → save activity_results.tsv."""
     oligo_df, norm_summary = normalize_and_compute_ratios(
         dna_counts_path, rna_counts_path, design_manifest_path
     )
-    results_df, call_summary = call_activity(oligo_df)
+    results_df, call_summary = _call_activity(oligo_df)
 
     if upload_dir is not None:
         results_df.to_csv(upload_dir / "activity_results.tsv", sep="\t", index=False)

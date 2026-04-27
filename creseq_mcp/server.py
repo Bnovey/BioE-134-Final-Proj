@@ -32,13 +32,9 @@ from creseq_mcp.qc.library import (
 )
 
 from creseq_mcp.stats.library import (
-    aggregate_fastq_counts_to_elements,
-    call_active_elements,
-    count_barcodes_from_fastq,
     interpret_literature_evidence,
     literature_search_for_motifs,
     motif_enrichment_summary,
-    normalize_activity,
     prepare_rag_context,
     rank_cre_candidates,
     search_encode_tf,
@@ -49,7 +45,7 @@ from creseq_mcp.stats.library import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = Path.home() / ".creseq" / "uploads"
+UPLOAD_DIR = Path.home() / "Desktop" / "creseq_outputs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 mcp = FastMCP(
@@ -305,84 +301,6 @@ def tool_process_library(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def tool_normalize_activity(
-    count_table_path: str,
-    pseudocount: float = 1.0,
-    dna_col: str = "dna_counts",
-    rna_col: str = "rna_counts",
-    element_col: str = "element_id",
-) -> dict:
-    """
-    Compute log2 RNA/DNA activity scores for each CRE.
-
-    Use after QC has produced element-level DNA and RNA count tables.
-    """
-    return _serialise(
-        normalize_activity(
-            count_table_path=count_table_path,
-            pseudocount=pseudocount,
-            dna_col=dna_col,
-            rna_col=rna_col,
-            element_col=element_col,
-        )
-    )
-
-
-@mcp.tool()
-def tool_call_active_elements(
-    activity_table_path: str,
-    activity_col: str = "log2_activity",
-    category_col: str = "designed_category",
-    negative_control_label: str = "negative_control",
-    activity_threshold: float = 1.0,
-    fdr_threshold: float = 0.05,
-) -> dict:
-    """
-    Classify CREs as active/inactive using an empirical negative-control background.
-    """
-    return _serialise(
-        call_active_elements(
-            activity_table_path=activity_table_path,
-            activity_col=activity_col,
-            category_col=category_col,
-            negative_control_label=negative_control_label,
-            activity_threshold=activity_threshold,
-            fdr_threshold=fdr_threshold,
-        )
-    )
-
-
-@mcp.tool(name="call_active_elements")
-def tool_call_active_elements_full(
-    activity_table_path: str,
-    negative_controls: list[str],
-    fdr_threshold: float = 0.05,
-    method: str = "empirical",
-    count_table_path: str | None = None,
-) -> dict:
-    """
-    Classify CRE-seq elements as active vs. inactive against a negative-control
-    null distribution.  Outputs per-element pvalue, BH-corrected FDR, z-score,
-    and fold-over-controls; writes <activity_table>_classified.tsv to disk.
-
-    method='empirical' (default) uses median/MAD on log2 RNA/DNA activities.
-    method='glm' will use a negative-binomial GLM on raw counts (not yet
-    implemented; pass count_table_path when enabled).
-    """
-    from creseq_mcp.activity_calling import call_active_elements as _call
-
-    return _serialise(
-        _call(
-            activity_table_path=activity_table_path,
-            negative_controls=negative_controls,
-            fdr_threshold=fdr_threshold,
-            method=method,
-            count_table_path=count_table_path,
-        )
-    )
-
-
-@mcp.tool()
 def tool_rank_cre_candidates(
     activity_table_path: str,
     top_n: int = 20,
@@ -438,44 +356,6 @@ def tool_prepare_rag_context(
             motif_col=motif_col,
             target_cell_type=target_cell_type,
             off_target_cell_type=off_target_cell_type,
-        )
-    )
-
-
-@mcp.tool()
-def tool_count_barcodes_from_fastq(
-    fastq_path: str,
-    barcode_start: int = 0,
-    barcode_length: int = 10,
-    max_reads: int | None = None,
-) -> dict:
-    """
-    Count fixed-position barcodes directly from raw FASTQ reads.
-    """
-    return _serialise(
-        count_barcodes_from_fastq(
-            fastq_path=fastq_path,
-            barcode_start=barcode_start,
-            barcode_length=barcode_length,
-            max_reads=max_reads,
-        )
-    )
-
-
-@mcp.tool()
-def tool_aggregate_fastq_counts_to_elements(
-    dna_barcode_counts_path: str,
-    rna_barcode_counts_path: str,
-    barcode_map_path: str,
-) -> dict:
-    """
-    Aggregate DNA/RNA barcode counts to element-level CRE activity values.
-    """
-    return _serialise(
-        aggregate_fastq_counts_to_elements(
-            dna_barcode_counts_path=dna_barcode_counts_path,
-            rna_barcode_counts_path=rna_barcode_counts_path,
-            barcode_map_path=barcode_map_path,
         )
     )
 
