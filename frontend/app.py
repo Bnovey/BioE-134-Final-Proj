@@ -486,7 +486,6 @@ elif page == "📊 QC & Plots":
                 tool_labels = {
                     "barcode_complexity": "Barcode Complexity",
                     "oligo_recovery": "Oligo Recovery",
-                    "synthesis_error_profile": "Synthesis Errors",
                     "barcode_collision_analysis": "Barcode Collisions",
                     "barcode_uniformity": "Barcode Uniformity",
                     "plasmid_depth_summary": "Plasmid Depth",
@@ -527,17 +526,6 @@ elif page == "📊 QC & Plots":
                                     labels={"recovery_at_10": "Recovery fraction", "category": "Category"},
                                     color_discrete_sequence=["#54A24B"])
                                 fig.add_hline(y=0.8, line_dash="dash", line_color="red", annotation_text="80% target")
-                                st.plotly_chart(fig, use_container_width=True)
-
-                    elif tool_key == "synthesis_error_profile" and not tool_df.empty:
-                        with st.expander(f"📊 {label}"):
-                            rate_cols = [c for c in ["mismatch_rate", "indel_rate", "soft_clip_rate"] if c in tool_df.columns]
-                            if rate_cols:
-                                means = tool_df[rate_cols].mean().reset_index()
-                                means.columns = ["Error type", "Rate"]
-                                fig = px.bar(means, x="Error type", y="Rate",
-                                    title="Mean Synthesis Error Rates",
-                                    color_discrete_sequence=["#E45756"])
                                 st.plotly_chart(fig, use_container_width=True)
 
                     elif tool_key == "plasmid_depth_summary" and res:

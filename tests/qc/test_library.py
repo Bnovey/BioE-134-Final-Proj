@@ -29,7 +29,6 @@ from creseq_mcp.qc.library import (
     oligo_length_qc,
     oligo_recovery,
     plasmid_depth_summary,
-    synthesis_error_profile,
     variant_family_coverage,
 )
 
@@ -154,64 +153,6 @@ class TestOligoRecovery:
     def test_empty_input_raises(self, empty_mapping_path, design_manifest_path):
         with pytest.raises(ValueError):
             oligo_recovery(empty_mapping_path, design_manifest_path)
-
-
-# ===========================================================================
-# 3. synthesis_error_profile
-# ===========================================================================
-
-
-class TestSynthesisErrorProfile:
-    def test_happy_path(self, mapping_table_path):
-        df, summ = synthesis_error_profile(mapping_table_path)
-
-        assert isinstance(df, pd.DataFrame)
-        assert set(df.columns) >= {
-            "oligo_id",
-            "n_barcodes",
-            "n_perfect_barcodes",
-            "perfect_fraction",
-            "mean_mismatches",
-        }
-        assert summ["pass"] is True  # 85% perfect → median perfect_fraction >> 0.5
-
-    def test_with_manifest(self, mapping_table_path, design_manifest_path):
-        df, summ = synthesis_error_profile(mapping_table_path, design_manifest_path)
-        # Should succeed; GC spearman reported if scipy available
-        assert "pass" in summ
-
-    def test_wrong_oligo_length_manifest_warns(
-        self, mapping_table_path, long_oligo_manifest_path
-    ):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            synthesis_error_profile(mapping_table_path, long_oligo_manifest_path)
-
-        cseq_warns = [w for w in caught if issubclass(w.category, CreSeqAssumptionWarning)]
-        assert len(cseq_warns) >= 1
-
-    def test_fail_case(self, tmp_path):
-        """Library where all barcodes have a mismatch → perfect_fraction = 0 → fail."""
-        rows = [
-            {
-                "barcode": "ACGTACGTAC",
-                "oligo_id": f"oligo_{i:03d}",
-                "n_reads": 10,
-                "cigar": "84M",
-                "md": f"42A41",  # one mismatch per barcode
-            }
-            for i in range(50)
-            for _ in range(5)
-        ]
-        p = tmp_path / "mismatch.tsv"
-        pd.DataFrame(rows).to_csv(p, sep="\t", index=False)
-        _, summ = synthesis_error_profile(str(p))
-        assert summ["median_perfect_fraction"] == pytest.approx(0.0)
-        assert summ["pass"] is False
-
-    def test_empty_input_raises(self, empty_mapping_path):
-        with pytest.raises(ValueError):
-            synthesis_error_profile(empty_mapping_path)
 
 
 # ===========================================================================

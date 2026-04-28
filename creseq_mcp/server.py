@@ -28,7 +28,6 @@ from creseq_mcp.qc.library import (
     oligo_length_qc,
     oligo_recovery,
     plasmid_depth_summary,
-    synthesis_error_profile,
     variant_family_coverage,
 )
 
@@ -145,22 +144,6 @@ def tool_oligo_recovery(
         thresholds,
     ))
 
-
-@mcp.tool()
-def tool_synthesis_error_profile(
-    mapping_table_path: str | None = None,
-    design_manifest_path: str | None = None,
-) -> dict:
-    """
-    Per-oligo synthesis error characterisation from CIGAR/MD tags.
-
-    Reports mismatches, indels, soft-clip rates, and Spearman correlation
-    between GC content and synthesis fidelity.  PASS when median perfect_fraction >= 0.50.
-    """
-    return _summary(synthesis_error_profile(
-        _path(mapping_table_path, "mapping_table.tsv"),
-        _path(design_manifest_path, "design_manifest.tsv") if design_manifest_path else None,
-    ))
 
 
 @mcp.tool()

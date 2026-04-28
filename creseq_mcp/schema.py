@@ -87,11 +87,6 @@ class OligoRecoveryInput(BaseModel):
     thresholds: list[int] = Field(default=[5, 10, 25])
 
 
-class SynthesisErrorProfileInput(BaseModel):
-    mapping_table_path: str
-    design_manifest_path: str | None = None
-
-
 class BarcodeCollisionInput(BaseModel):
     mapping_table_path: str
     min_read_support: int = Field(default=2, ge=1)

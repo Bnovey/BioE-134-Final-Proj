@@ -48,7 +48,7 @@ from creseq_mcp.schema import (
     OligoLengthQcInput,
     OligoRecoveryInput,
     PlasmidDepthSummaryInput,
-    SynthesisErrorProfileInput,
+
     VariantFamilyCoverageInput,
 )
 
@@ -551,105 +551,6 @@ def oligo_recovery(
 
 
 # ---------------------------------------------------------------------------
-# Tool 3: synthesis_error_profile
-# ---------------------------------------------------------------------------
-
-
-def synthesis_error_profile(
-    mapping_table_path: str | Path,
-    design_manifest_path: str | Path | None = None,
-) -> tuple[pd.DataFrame, dict]:
-    """
-    Question answered:
-        What is the per-oligo rate of synthesis errors (mismatches, indels,
-        truncations) as inferred from CIGAR/MD tags, and is there a GC-content
-        bias in synthesis fidelity?
-
-    Inputs:
-        mapping_table_path   : path to barcode→oligo mapping TSV
-        design_manifest_path : optional; if provided and contains gc_content,
-                               Spearman(GC, perfect_fraction) is reported
-
-    Outputs:
-        DataFrame — one row per oligo_id:
-            oligo_id, n_barcodes, n_perfect_barcodes, perfect_fraction,
-            mean_mismatches, mean_insertions, mean_deletions, mean_soft_clipped
-        summary dict — median_perfect_fraction, gc_spearman_r (if manifest given),
-            warnings, pass
-
-    Pass/fail criteria:
-        PASS  iff  median perfect_fraction >= 0.50
-
-    CRE-seq-specific notes:
-        - Default oligo-length assumption is 84–200 bp (Agilent/IDT oPools range).
-          A warning is raised if designed oligos fall outside this window.
-        - Agilent 244K and IDT oPools pools show modest GC bias in synthesis yield;
-          reporting Spearman(GC, perfect_fraction) helps identify affected oligos.
-    """
-    params = SynthesisErrorProfileInput(
-        mapping_table_path=str(mapping_table_path),
-        design_manifest_path=str(design_manifest_path) if design_manifest_path else None,
-    )
-
-    df = _load_mapping_table(params.mapping_table_path)
-    df = _parse_errors_for_df(df)
-
-    grp = df.groupby("oligo_id")
-    result = pd.DataFrame(
-        {
-            "n_barcodes": grp["barcode"].count(),
-            "n_perfect_barcodes": grp["is_perfect"].sum().astype(int),
-            "mean_mismatches": grp["mismatches"].mean(),
-            "mean_insertions": grp["insertions"].mean(),
-            "mean_deletions": grp["deletions"].mean(),
-            "mean_soft_clipped": grp["soft_clipped"].mean(),
-        }
-    ).reset_index()
-    result["perfect_fraction"] = result["n_perfect_barcodes"] / result["n_barcodes"].clip(lower=1)
-
-    warn_msgs: list[str] = []
-    gc_r: float | None = None
-    gc_p: float | None = None
-
-    if params.design_manifest_path:
-        manifest = _load_design_manifest(params.design_manifest_path)
-        asm_warns = _validate_creseq_assumptions(manifest)
-        for w in asm_warns:
-            pass  # CreSeqAssumptionWarning suppressed
-        warn_msgs.extend(asm_warns)
-
-        if "gc_content" in manifest.columns and _HAS_SCIPY:
-            merged = result.merge(
-                manifest[["oligo_id", "gc_content"]].dropna(subset=["gc_content"]),
-                on="oligo_id",
-                how="inner",
-            )
-            if len(merged) >= 5:
-                corr_result = _spearmanr(merged["gc_content"], merged["perfect_fraction"])
-                gc_r = float(corr_result.statistic)
-                gc_p = float(corr_result.pvalue)
-                if abs(gc_r) > 0.3:
-                    warn_msgs.append(
-                        f"GC–synthesis fidelity Spearman r={gc_r:.3f} (p={gc_p:.3g}): "
-                        f"notable GC bias in this pool."
-                    )
-        elif "gc_content" in manifest.columns and not _HAS_SCIPY:
-            warn_msgs.append("scipy not installed; GC–fidelity Spearman correlation skipped.")
-
-    median_pf = float(result["perfect_fraction"].median())
-    summary: dict[str, Any] = {
-        "median_perfect_fraction": median_pf,
-        "n_oligos": int(len(result)),
-        "warnings": warn_msgs,
-        "pass": median_pf >= 0.50,
-    }
-    if gc_r is not None:
-        summary["gc_spearman_r"] = gc_r
-        summary["gc_spearman_p"] = gc_p
-
-    return result, summary
-
-
 # ---------------------------------------------------------------------------
 # Tool 4: barcode_collision_analysis
 # ---------------------------------------------------------------------------
@@ -1364,13 +1265,6 @@ def library_summary_report(
         barcode_collision_analysis,
         params.mapping_table_path,
         **tc.get("barcode_collision_analysis", {}),
-    )
-    _run(
-        "synthesis_error_profile",
-        synthesis_error_profile,
-        params.mapping_table_path,
-        params.design_manifest_path,
-        **tc.get("synthesis_error_profile", {}),
     )
     _run(
         "plasmid_depth_summary",
