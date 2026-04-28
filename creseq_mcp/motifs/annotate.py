@@ -85,29 +85,40 @@ def _pfm_to_pwm(pfm: dict[str, list[float]], pseudocount: float = 0.1) -> np.nda
     return pwm
 
 
+def _seq_to_indices(seq: str) -> np.ndarray:
+    _nt = np.full(128, -1, dtype=np.int8)
+    for ch, i in (("A", 0), ("C", 1), ("G", 2), ("T", 3)):
+        _nt[ord(ch)] = i
+    arr = np.frombuffer(seq.encode(), dtype=np.uint8)
+    return _nt[arr]
+
+
+_COMP_TABLE = bytes.maketrans(b"ACGTacgt", b"TGCAtgca")
+
+
 def _scan_sequence(seq: str, pwm: np.ndarray) -> float:
     """Return the maximum PWM score over all positions in seq (both strands)."""
-    _nt = {"A": 0, "C": 1, "G": 2, "T": 3}
-    _comp = {"A": "T", "T": "A", "C": "G", "G": "C"}
     L = pwm.shape[1]
     n = len(seq)
     if n < L:
         return float("-inf")
 
     best = float("-inf")
-    for strand_seq in [seq, "".join(_comp.get(b, "N") for b in reversed(seq))]:
-        for start in range(n - L + 1):
-            window = strand_seq[start: start + L]
-            score = 0.0
-            valid = True
-            for pos, base in enumerate(window):
-                idx = _nt.get(base)
-                if idx is None:
-                    valid = False
-                    break
-                score += pwm[idx, pos]
-            if valid and score > best:
-                best = score
+    rc = seq.encode().translate(_COMP_TABLE)[::-1].decode()
+    for strand_seq in (seq, rc):
+        idx = _seq_to_indices(strand_seq)
+        # build (n-L+1, L) window matrix via stride tricks
+        shape = (n - L + 1, L)
+        strides = (idx.strides[0], idx.strides[0])
+        windows = np.lib.stride_tricks.as_strided(idx, shape=shape, strides=strides)
+        valid = (windows >= 0).all(axis=1)
+        if not valid.any():
+            continue
+        w = windows[valid].astype(int)
+        scores = pwm[w, np.arange(L)].sum(axis=1)
+        m = float(scores.max())
+        if m > best:
+            best = m
     return best
 
 
