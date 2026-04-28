@@ -585,6 +585,7 @@ def tool_motif_enrichment(
 ) -> dict:
     """
     Test for TF binding motif enrichment in active CRE-seq elements.
+    output_path defaults to motif_enrichment.tsv in the upload directory.
 
     Scans active and background FASTA sequences against JASPAR motif PWMs on
     both strands and tests each motif for enrichment with one-sided Fisher's
@@ -600,7 +601,7 @@ def tool_motif_enrichment(
         collection=collection,
         tax_group=tax_group,
         score_threshold=score_threshold,
-        output_path=output_path,
+        output_path=output_path or str(UPLOAD_DIR / "motif_enrichment.tsv"),
     )
 
 
@@ -608,7 +609,7 @@ def tool_motif_enrichment(
 def tool_plot_creseq(
     plot_type: str,
     data_file: str | None = None,
-    output_path: str = "plot.png",
+    output_path: str | None = None,
     highlight_ids: list[str] | None = None,
     neg_control_ids: list[str] | None = None,
     annotation_file: str | None = None,
@@ -622,13 +623,15 @@ def tool_plot_creseq(
 
     data_file is optional — omit it and activity_results.tsv from the upload
     directory is used automatically.
+    output_path is optional — defaults to <plot_type>.png in the upload directory.
     """
     from creseq_mcp.plots.plots import plot_creseq
 
+    resolved_output = output_path or str(UPLOAD_DIR / f"{plot_type}.png")
     return plot_creseq(
         data_file=_path(data_file, "activity_results.tsv"),
         plot_type=plot_type,
-        output_path=output_path,
+        output_path=resolved_output,
         highlight_ids=highlight_ids,
         neg_control_ids=neg_control_ids,
         annotation_file=annotation_file,

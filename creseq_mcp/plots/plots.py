@@ -487,6 +487,19 @@ def plot_creseq(
 
     df = pd.read_csv(data_file, sep="\t")
 
+    # Normalize activity_results.tsv column names to what plot functions expect.
+    if "oligo_id" in df.columns and "element_id" not in df.columns:
+        df = df.rename(columns={"oligo_id": "element_id"})
+    if "log2_ratio" in df.columns and "mean_activity" not in df.columns:
+        df = df.rename(columns={"log2_ratio": "mean_activity"})
+    # log2_rna_count_rep1 → rep1_activity (replicate correlation plot)
+    for col in list(df.columns):
+        if col.startswith("log2_rna_count_rep"):
+            rep_num = col.replace("log2_rna_count_rep", "")
+            new_col = f"rep{rep_num}_activity"
+            if new_col not in df.columns:
+                df = df.rename(columns={col: new_col})
+
     if plot_type == "volcano":
         return _plot_volcano(df, output_path, neg_control_ids, highlight_ids)
     if plot_type == "ranked_activity":

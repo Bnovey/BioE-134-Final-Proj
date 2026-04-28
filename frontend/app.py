@@ -279,15 +279,19 @@ if page == "📤 Upload":
             import shutil as _shutil
 
             def _copy_assoc_files(mapping, plasmid, manifest):
-                """Copy association files from their source into UPLOAD_DIR."""
+                """Copy association files into ASSOC_DIR (visible) and UPLOAD_DIR (hidden)."""
                 for src, name in [
                     (mapping, "mapping_table.tsv"),
                     (plasmid, "plasmid_counts.tsv"),
                 ]:
-                    if src and Path(src).resolve() != (UPLOAD_DIR / name).resolve():
-                        _shutil.copy(src, UPLOAD_DIR / name)
-                if manifest and Path(manifest).resolve() != (UPLOAD_DIR / "design_manifest.tsv").resolve():
-                    _shutil.copy(manifest, UPLOAD_DIR / "design_manifest.tsv")
+                    if src:
+                        for dest_dir in [ASSOC_DIR, UPLOAD_DIR]:
+                            if Path(src).resolve() != (dest_dir / name).resolve():
+                                _shutil.copy(src, dest_dir / name)
+                if manifest:
+                    for dest_dir in [ASSOC_DIR, UPLOAD_DIR]:
+                        if Path(manifest).resolve() != (dest_dir / "design_manifest.tsv").resolve():
+                            _shutil.copy(manifest, dest_dir / "design_manifest.tsv")
 
             if skip_assoc:
                 _copy_assoc_files(existing_mapping_path, existing_plasmid_path, existing_manifest_path)
