@@ -606,8 +606,8 @@ def tool_motif_enrichment(
 
 @mcp.tool()
 def tool_plot_creseq(
-    data_file: str,
     plot_type: str,
+    data_file: str | None = None,
     output_path: str = "plot.png",
     highlight_ids: list[str] | None = None,
     neg_control_ids: list[str] | None = None,
@@ -619,11 +619,14 @@ def tool_plot_creseq(
     plot_type ∈ {volcano, ranked_activity, replicate_correlation,
     annotation_boxplot, motif_dotplot}.  Returns the path to the saved
     figure plus a natural-language description of what it shows.
+
+    data_file is optional — omit it and activity_results.tsv from the upload
+    directory is used automatically.
     """
     from creseq_mcp.plots.plots import plot_creseq
 
     return plot_creseq(
-        data_file=data_file,
+        data_file=_path(data_file, "activity_results.tsv"),
         plot_type=plot_type,
         output_path=output_path,
         highlight_ids=highlight_ids,
