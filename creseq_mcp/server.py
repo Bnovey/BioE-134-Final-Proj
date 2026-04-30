@@ -553,15 +553,64 @@ def tool_extract_sequences(
     sequence_source: str,
     active_output: str = "active.fa",
     background_output: str = "background.fa",
+    gc_match: bool = False,
+    gc_bin_size: float = 0.05,
+    n_per_active: int = 1,
+    random_state: int = 0,
 ) -> dict:
     """
-    Bridge ``call_active_elements`` → ``motif_enrichment``.
+    Split classified CRE-seq elements into active and background FASTA files
+    suitable for motif enrichment.
 
-    Reads a classified-elements TSV (with ``element_id``, ``active``,
-    ``pvalue`` columns) and a sequence-source TSV (with ``element_id`` +
-    ``sequence``) and writes two FASTAs: actives, and inactive test elements
-    as background.  Negative controls (NaN pvalue) are excluded from both.
-    Returns paths plus per-set counts.
+    Bridges call_active_elements -> motif_enrichment by translating the
+    classification table into the two-FASTA contrast that Fisher's exact
+    enrichment requires. Crucially, *negative controls are excluded from
+    both files* — they defined the null and would bias the contrast if
+    placed in the background.
+
+    Selection rules:
+        active.fa     : rows where active == True
+        background.fa : rows where active == False AND pvalue is not NaN
+                        (i.e. inactive *test* elements; controls have NaN
+                        p-values and are filtered out here)
+
+    Args:
+        classified_table: Path to a TSV produced by call_active_elements
+            (must contain `element_id`, `active`, `pvalue` columns).
+        sequence_source: Path to a TSV with `element_id` and `sequence`
+            columns — typically the design manifest. The function auto-renames
+            `oligo_id` -> `element_id` if needed.
+        active_output: Path for the active sequences FASTA. Default "active.fa".
+        background_output: Path for the background FASTA. Default "background.fa".
+        gc_match: When True, sub-sample the background pool so its GC
+            distribution matches the active set bin-for-bin. Defaults to
+            False (every inactive test element used as background). Enable
+            this to remove spurious enrichment of GC-rich motifs (SP1, EGR1,
+            KLF family) that can ride along when active CREs are GC-richer
+            than random DNA.
+        gc_bin_size: GC-bin width for matching, in [0, 1]. Default 0.05 (20
+            bins). Smaller bins = stricter matching but a smaller usable
+            background pool.
+        n_per_active: Number of background sequences drawn per active
+            sequence within the matching bin. Default 1 (one-to-one).
+        random_state: Seed for reproducible sampling. Default 0.
+
+    Returns:
+        dict with keys:
+            active_fasta (str): path written for active sequences
+            background_fasta (str): path written for background sequences
+            n_active (int): number of records in active.fa
+            n_background (int): number of records in background.fa
+            gc_matched (bool): whether GC matching was applied
+
+    Notes:
+        - FASTA records use `element_id` as the header and the full sequence
+          on a single line (no line wrapping).
+        - Element IDs missing from the sequence source emit a UserWarning and
+          are skipped — the function does not crash on partial coverage.
+        - The active vs. background sets are disjoint by construction.
+        - When gc_match=True, a UserWarning fires if a GC bin needed a
+          nearest-bin fallback or sampling-with-replacement.
     """
     from creseq_mcp.motifs.enrichment import extract_sequences_to_fasta
 
@@ -570,6 +619,10 @@ def tool_extract_sequences(
         sequence_source=sequence_source,
         active_output=active_output,
         background_output=background_output,
+        gc_match=gc_match,
+        gc_bin_size=gc_bin_size,
+        n_per_active=n_per_active,
+        random_state=random_state,
     )
 
 
@@ -584,13 +637,57 @@ def tool_motif_enrichment(
     output_path: str | None = None,
 ) -> dict:
     """
-    Test for TF binding motif enrichment in active CRE-seq elements.
-    output_path defaults to motif_enrichment.tsv in the upload directory.
+    Identify transcription factor binding motifs enriched in active CRE-seq
+    elements relative to inactive ones.
 
-    Scans active and background FASTA sequences against JASPAR motif PWMs on
-    both strands and tests each motif for enrichment with one-sided Fisher's
-    exact + BH-FDR.  Returns the enrichment table path and a summary of the
-    top significant motifs.
+    Loads position weight matrices from JASPAR, scans both strands of every
+    sequence with a log-odds PSSM, and tests each motif for differential
+    occurrence between the active and background sets using one-sided
+    Fisher's exact (alternative='greater'). P-values are corrected to FDRs
+    via Benjamini-Hochberg. The result tells you which TFs likely drive the
+    observed regulatory activity.
+
+    Algorithm:
+        1. Load motif PWMs from JASPAR (default: 879 vertebrate CORE motifs)
+        2. Build log-odds PSSMs (Biopython); for each sequence, scan forward
+           and reverse strands at the given relative-score threshold
+        3. Per motif build a 2x2 contingency table:
+                            hits   no-hits
+              active     |   a   |   b
+              background |   c   |   d
+        4. Fisher's exact, alternative='greater'
+        5. BH-FDR adjustment across all tested motifs
+        6. Sort by [fdr ASC, odds_ratio DESC]; OR is capped at 999.0
+
+    Args:
+        active_fasta: Path to FASTA of active sequences (from extract_sequences).
+        background_fasta: Path to FASTA of background sequences.
+        motif_database: pyjaspar release tag. Default "JASPAR2024".
+        collection: JASPAR collection name. Default "CORE" (curated, non-redundant).
+        tax_group: Taxonomic group filter. Default "Vertebrates".
+            Other valid values include "Plants", "Insects", "Fungi", "Nematodes".
+        score_threshold: PSSM relative-score cutoff in [0, 1]. 1.0 = perfect
+            consensus match; 0.7 is permissive; 0.8 (default) is balanced;
+            0.85-0.9 is conservative. Lower thresholds increase sensitivity
+            but inflate background hits.
+        output_path: Optional TSV destination. Defaults to motif_enrichment.tsv
+            in the upload directory.
+
+    Returns:
+        dict with keys:
+            enrichment_table (str): path to the output TSV with columns
+                motif_id, tf_name, n_active_hits, n_background_hits,
+                n_active_total, n_background_total, odds_ratio, pvalue, fdr.
+            summary (str): natural-language summary naming the top
+                significant motifs (FDR < 0.05).
+
+    Notes:
+        - Both strands are scanned because TF binding sites are
+          orientation-independent on duplex DNA.
+        - Empty input FASTAs produce an empty enrichment table with the
+          schema preserved (no crash).
+        - Sequences shorter than a motif's PWM length are skipped silently
+          for that motif.
     """
     from creseq_mcp.motifs.enrichment import motif_enrichment
 
@@ -615,15 +712,59 @@ def tool_plot_creseq(
     annotation_file: str | None = None,
 ) -> dict:
     """
-    Generate a publication-quality CRE-seq plot.
+    Generate publication-quality CRE-seq figures from analysis output tables.
 
-    plot_type ∈ {volcano, ranked_activity, replicate_correlation,
-    annotation_boxplot, motif_dotplot}.  Returns the path to the saved
-    figure plus a natural-language description of what it shows.
+    A single dispatcher routing to five plot types — pick whichever answers
+    the question you have:
+        - volcano             : effect-size vs. significance
+        - ranked_activity     : per-element activity, sorted
+        - replicate_correlation : reproducibility between replicates
+        - annotation_boxplot  : activity stratified by user-supplied category
+        - motif_dotplot       : top enriched TF motifs from motif_enrichment
 
-    data_file is optional — omit it and activity_results.tsv from the upload
-    directory is used automatically.
-    output_path is optional — defaults to <plot_type>.png in the upload directory.
+    All plots use a consistent palette (active=red #E63946, inactive=grey
+    #BBBBBB, controls=blue #457B9D, highlights=teal #2A9D8F) and are written
+    at 200 DPI with 14 pt titles / 12 pt axis labels / 8 pt legends.
+
+    Args:
+        plot_type: One of {"volcano", "ranked_activity",
+            "replicate_correlation", "annotation_boxplot", "motif_dotplot"}.
+        data_file: TSV path. The required schema depends on plot_type:
+            volcano              : `mean_activity` + (`pvalue` or `fdr`)
+            ranked_activity      : `element_id` + `mean_activity` (+ `active`
+                                   if you want bars colored)
+            replicate_correlation: `repN_activity` columns for at least
+                                   two replicates (N = 1, 2, ...)
+            annotation_boxplot   : `element_id` + `mean_activity` (joins
+                                   with annotation_file on element_id)
+            motif_dotplot        : `tf_name`, `odds_ratio`, `fdr`,
+                                   `n_active_hits` (the motif_enrichment output)
+            Omit this argument to use activity_results.tsv from the upload directory.
+        output_path: Destination PNG path. Defaults to <plot_type>.png in
+            the upload directory.
+        highlight_ids: Optional list of element_ids to highlight in teal
+            (volcano, ranked_activity).
+        neg_control_ids: Optional list of element_ids to draw in blue
+            (volcano).
+        annotation_file: Required when plot_type='annotation_boxplot' —
+            TSV with columns `element_id` and `annotation`.
+
+    Returns:
+        dict with keys:
+            plot_path (str): absolute path to the saved PNG.
+            description (str): natural-language summary of the figure
+                (e.g. "Volcano of 600 elements; 213 active at FDR<0.05",
+                or "Pearson r=0.87 across 600 elements" for replicate plots).
+
+    Raises:
+        ValueError: unknown plot_type, missing required columns for the
+            chosen plot, or annotation_file missing/invalid when required.
+
+    Notes:
+        - Uses matplotlib's headless Agg backend, so it is safe to call
+          inside an MCP server without a display.
+        - The motif_dotplot falls back to a "no significant motifs" note
+          (still a valid PNG) if nothing reaches FDR < 0.05.
     """
     from creseq_mcp.plots.plots import plot_creseq
 

@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 
 from creseq_mcp.motifs.enrichment import (
+    _gc_fraction,
     _parse_fasta,
     compute_enrichment,
     extract_sequences_to_fasta,
@@ -267,6 +268,119 @@ def test_extract_missing_sequences_warns(
     assert active_out.exists()
     assert bg_out.exists()
     assert result["n_active"] + result["n_background"] <= len(half)
+
+
+# ---------------------------------------------------------------------------
+# GC-content matching of background pool
+# ---------------------------------------------------------------------------
+
+
+def _build_gc_skewed_inputs(tmp_path, n_active=40, n_background=120, seed=0):
+    """
+    Helper: build a classified TSV + manifest where the active set is GC-rich
+    (~70%) and the background pool spans GC 30-70%. Without GC matching the
+    background mean GC is ~50%; with matching it should track active.
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed)
+
+    def _seq_at_gc(gc_target: float, length: int = 100) -> str:
+        n_gc = int(round(length * gc_target))
+        bases = ["G"] * (n_gc // 2) + ["C"] * (n_gc - n_gc // 2)
+        bases += ["A"] * ((length - n_gc) // 2)
+        bases += ["T"] * (length - len(bases))
+        rng.shuffle(bases)
+        return "".join(bases)
+
+    rows, manifest_rows = [], []
+    for i in range(n_active):
+        eid = f"ACT{i:03d}"
+        rows.append({"element_id": eid, "active": True, "pvalue": 1e-6})
+        manifest_rows.append({"element_id": eid, "sequence": _seq_at_gc(0.70)})
+    for i in range(n_background):
+        eid = f"BG{i:03d}"
+        gc = float(rng.uniform(0.30, 0.70))
+        rows.append({"element_id": eid, "active": False, "pvalue": 0.5})
+        manifest_rows.append({"element_id": eid, "sequence": _seq_at_gc(gc)})
+
+    cls_df = pd.DataFrame(rows)
+    manifest_df = pd.DataFrame(manifest_rows)
+    cls_path = tmp_path / "cls.tsv"
+    manifest_path = tmp_path / "manifest.tsv"
+    cls_df.to_csv(cls_path, sep="\t", index=False)
+    manifest_df.to_csv(manifest_path, sep="\t", index=False)
+    return str(cls_path), str(manifest_path)
+
+
+def test_gc_match_off_preserves_existing_behavior(tmp_path):
+    """gc_match=False (default) yields the same background as before."""
+    cls_path, manifest_path = _build_gc_skewed_inputs(tmp_path)
+    out_a = tmp_path / "a.fa"
+    out_b = tmp_path / "b.fa"
+
+    result = extract_sequences_to_fasta(
+        cls_path, manifest_path,
+        active_output=str(out_a), background_output=str(out_b),
+    )
+    assert result["gc_matched"] is False
+    # Without matching, every inactive test row appears in background.
+    assert result["n_background"] == 120
+
+
+def test_gc_matching_aligns_distributions(tmp_path):
+    """Matched background mean GC should track active mean GC within ~3%."""
+    cls_path, manifest_path = _build_gc_skewed_inputs(tmp_path)
+    out_a = tmp_path / "a.fa"
+    out_b = tmp_path / "b.fa"
+
+    extract_sequences_to_fasta(
+        cls_path, manifest_path,
+        active_output=str(out_a), background_output=str(out_b),
+        gc_match=True, gc_bin_size=0.05, random_state=0,
+    )
+
+    active_gcs = [_gc_fraction(s) for s in _parse_fasta(out_a).values()]
+    bg_gcs = [_gc_fraction(s) for s in _parse_fasta(out_b).values()]
+
+    active_mean = sum(active_gcs) / len(active_gcs)
+    bg_mean = sum(bg_gcs) / len(bg_gcs)
+    # Active is planted at 0.70; background pool was uniform 0.30-0.70 (mean
+    # 0.50). After GC matching the background mean should pull up toward
+    # active.
+    assert abs(active_mean - bg_mean) < 0.03, (
+        f"GC matching failed to align distributions: "
+        f"active={active_mean:.3f}, background={bg_mean:.3f}"
+    )
+
+
+def test_gc_matching_warns_on_replacement(tmp_path):
+    """When an active GC bin has more sequences than candidates,
+    sampling-with-replacement should fire a UserWarning."""
+    # Build a case where the active GC bin has 50 sequences but only 5
+    # candidates exist in that bin → replacement is unavoidable.
+    rows, manifest_rows = [], []
+    for i in range(50):
+        eid = f"ACT{i:03d}"
+        rows.append({"element_id": eid, "active": True, "pvalue": 1e-6})
+        manifest_rows.append({"element_id": eid, "sequence": "G" * 70 + "A" * 30})
+    for i in range(5):
+        eid = f"BG{i:03d}"
+        rows.append({"element_id": eid, "active": False, "pvalue": 0.5})
+        manifest_rows.append({"element_id": eid, "sequence": "G" * 70 + "A" * 30})
+
+    cls_path = tmp_path / "cls.tsv"
+    mfst_path = tmp_path / "manifest.tsv"
+    pd.DataFrame(rows).to_csv(cls_path, sep="\t", index=False)
+    pd.DataFrame(manifest_rows).to_csv(mfst_path, sep="\t", index=False)
+
+    out_a = tmp_path / "a.fa"
+    out_b = tmp_path / "b.fa"
+    with pytest.warns(UserWarning, match="replacement"):
+        extract_sequences_to_fasta(
+            str(cls_path), str(mfst_path),
+            active_output=str(out_a), background_output=str(out_b),
+            gc_match=True,
+        )
 
 
 @pytest.mark.slow
