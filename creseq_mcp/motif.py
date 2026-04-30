@@ -45,11 +45,102 @@ def _write_fasta(records: list[tuple[str, str]], path: str | Path) -> None:
             fh.write(f">{record_id}\n{seq}\n")
 
 
+def _gc_fraction(seq: str) -> float:
+    """GC fraction in [0, 1]; returns 0.0 for empty sequences."""
+    if not seq:
+        return 0.0
+    seq = seq.upper()
+    return (seq.count("G") + seq.count("C")) / len(seq)
+
+
+def _gc_match_background(
+    active_records: list[tuple[str, str]],
+    candidate_records: list[tuple[str, str]],
+    bin_size: float = 0.05,
+    n_per_active: int = 1,
+    random_state: int | None = 0,
+) -> list[tuple[str, str]]:
+    """
+    Sub-sample ``candidate_records`` so its GC distribution matches
+    ``active_records`` bin-for-bin.
+
+    For each active sequence the function draws ``n_per_active`` candidates
+    from the same GC bin (default 5 % wide). When a bin has no candidates the
+    nearest non-empty bin is used as a fallback; when a bin has fewer
+    candidates than needed, sampling is done with replacement and a warning
+    is emitted.
+
+    Returns a list of ``(id, sequence)`` records of length
+    ``≤ len(active_records) * n_per_active``.
+    """
+    if not active_records or not candidate_records:
+        return list(candidate_records)
+
+    rng = np.random.default_rng(random_state)
+
+    active_df = pd.DataFrame(active_records, columns=["element_id", "sequence"])
+    cand_df = pd.DataFrame(candidate_records, columns=["element_id", "sequence"])
+    active_df["gc"] = active_df["sequence"].map(_gc_fraction)
+    cand_df["gc"] = cand_df["sequence"].map(_gc_fraction)
+    active_df["bin"] = (active_df["gc"] // bin_size).astype(int)
+    cand_df["bin"] = (cand_df["gc"] // bin_size).astype(int)
+
+    chosen_ids: list[str] = []
+    replacement_used = False
+    fallback_used = False
+
+    for bin_id, group in active_df.groupby("bin", sort=False):
+        n_needed = len(group) * n_per_active
+        pool = cand_df[cand_df["bin"] == bin_id]
+
+        if len(pool) == 0:
+            # Nearest non-empty bin
+            bin_distances = (cand_df["bin"] - bin_id).abs()
+            order = bin_distances.sort_values().index
+            pool = cand_df.loc[order].head(max(n_needed * 3, 1))
+            fallback_used = True
+
+        replace = len(pool) < n_needed
+        replacement_used = replacement_used or replace
+        sampled = pool.sample(n=n_needed, replace=replace, random_state=rng.integers(2**31))
+        chosen_ids.extend(sampled["element_id"].tolist())
+
+    if fallback_used:
+        warnings.warn(
+            "GC bin matching used a nearest-bin fallback for at least one "
+            "active GC range — background pool lacks coverage in that bin.",
+            UserWarning,
+            stacklevel=3,
+        )
+    if replacement_used:
+        warnings.warn(
+            "GC bin matching sampled background sequences with replacement — "
+            "the background pool was smaller than the active set in at least "
+            "one GC bin.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    seen: set[str] = set()
+    result: list[tuple[str, str]] = []
+    cand_lookup = dict(candidate_records)
+    for eid in chosen_ids:
+        if eid in seen:
+            continue
+        seen.add(eid)
+        result.append((eid, cand_lookup[eid]))
+    return result
+
+
 def extract_sequences_to_fasta(
     classified_table: str | Path,
     sequence_source: str | Path,
     active_output: str | Path = "active.fa",
     background_output: str | Path = "background.fa",
+    gc_match: bool = False,
+    gc_bin_size: float = 0.05,
+    n_per_active: int = 1,
+    random_state: int | None = 0,
 ) -> dict:
     """
     Bridge ``call_active_elements`` → ``motif_enrichment``.
@@ -64,10 +155,28 @@ def extract_sequences_to_fasta(
     ``sequence`` columns).  Element IDs missing from the source are warned
     about and skipped (no crash).
 
+    GC matching
+    -----------
+    When ``gc_match=True`` the background pool is sub-sampled so its GC
+    distribution matches the active set bin-for-bin (default 5 % bins). This
+    eliminates spurious enrichment of GC-rich motifs (SP1, EGR1, KLF family,
+    etc.) that tend to ride along when active CREs happen to be GC-richer
+    than random DNA. Default ``gc_match=False`` preserves the original
+    behaviour (every inactive test element used as background).
+
+    Parameters
+    ----------
+    classified_table, sequence_source : path-like
+    active_output, background_output  : path-like
+    gc_match      : opt-in GC-content matching of the background pool
+    gc_bin_size   : GC-bin width (0–1); 0.05 → 20 bins. Smaller = stricter.
+    n_per_active  : number of background sequences drawn per active sequence
+    random_state  : seed for reproducible sampling
+
     Returns
     -------
     dict with keys ``active_fasta``, ``background_fasta``, ``n_active``,
-    ``n_background``.
+    ``n_background``, ``gc_matched`` (bool).
     """
     classified = pd.read_csv(classified_table, sep="\t")
     sources = pd.read_csv(sequence_source, sep="\t")
@@ -118,6 +227,15 @@ def extract_sequences_to_fasta(
             stacklevel=2,
         )
 
+    if gc_match and active_records and background_records:
+        background_records = _gc_match_background(
+            active_records,
+            background_records,
+            bin_size=gc_bin_size,
+            n_per_active=n_per_active,
+            random_state=random_state,
+        )
+
     _write_fasta(active_records, active_output)
     _write_fasta(background_records, background_output)
 
@@ -126,6 +244,7 @@ def extract_sequences_to_fasta(
         "background_fasta": str(background_output),
         "n_active": len(active_records),
         "n_background": len(background_records),
+        "gc_matched": bool(gc_match),
     }
 
 

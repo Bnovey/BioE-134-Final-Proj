@@ -1,0 +1,901 @@
+{
+  "mcpVersion": "2024-11-05",
+  "server": {
+    "name": "creseq-mcp",
+    "version": "0.1.0"
+  },
+  "tools": [
+    {
+      "name": "tool_barcode_complexity",
+      "description": "\nPer-oligo barcode count statistics.\n\nReturns how many distinct barcodes support each designed oligo, what\nfraction are error-free (perfect CIGAR/MD), and the median read depth\nper barcode.  PASS when median barcodes/oligo >= 10.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "min_reads_per_barcode": {
+            "default": 1,
+            "title": "Min Reads Per Barcode",
+            "type": "integer"
+          }
+        },
+        "title": "tool_barcode_complexityArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_oligo_recovery",
+      "description": "\nRecovery rate of designed oligos, broken out by designed_category.\n\nPASS when test_element recovery@10 >= 80% AND positive_control recovery@10 >= 95%.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "design_manifest_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Design Manifest Path"
+          },
+          "thresholds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thresholds"
+          }
+        },
+        "title": "tool_oligo_recoveryArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_synthesis_error_profile",
+      "description": "\nPer-oligo synthesis error characterisation from CIGAR/MD tags.\n\nReports mismatches, indels, soft-clip rates, and Spearman correlation\nbetween GC content and synthesis fidelity.  PASS when median perfect_fraction >= 0.50.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "design_manifest_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Design Manifest Path"
+          }
+        },
+        "title": "tool_synthesis_error_profileArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_barcode_collision_analysis",
+      "description": "\nBarcodes that map to more than one designed oligo.\n\nPASS when collision rate < 3%.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "min_read_support": {
+            "default": 2,
+            "title": "Min Read Support",
+            "type": "integer"
+          }
+        },
+        "title": "tool_barcode_collision_analysisArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_barcode_uniformity",
+      "description": "\nPer-oligo barcode abundance evenness in the plasmid pool (Gini coefficient).\n\nPASS when median Gini < 0.30.\n",
+      "inputSchema": {
+        "properties": {
+          "plasmid_count_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Plasmid Count Path"
+          },
+          "min_barcodes_per_oligo": {
+            "default": 5,
+            "title": "Min Barcodes Per Oligo",
+            "type": "integer"
+          }
+        },
+        "title": "tool_barcode_uniformityArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_gc_content_bias",
+      "description": "\nSynthesis recovery stratified by oligo GC content.\n\nFlags GC bins with recovery < 50% of the median bin.  PASS when no dropout bins found.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "design_manifest_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Design Manifest Path"
+          },
+          "gc_bins": {
+            "default": 10,
+            "title": "Gc Bins",
+            "type": "integer"
+          }
+        },
+        "title": "tool_gc_content_biasArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_oligo_length_qc",
+      "description": "\nSynthesis-truncation check comparing observed alignment length to designed length.\n\nPASS when median fraction_full_length >= 0.80.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "design_manifest_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Design Manifest Path"
+          }
+        },
+        "title": "tool_oligo_length_qcArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_plasmid_depth_summary",
+      "description": "\nBarcode-level read-count statistics in the plasmid DNA library.\n\nPASS when median dna_count >= 10 AND fewer than 10% of barcodes have zero counts.\n",
+      "inputSchema": {
+        "properties": {
+          "plasmid_count_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Plasmid Count Path"
+          }
+        },
+        "title": "tool_plasmid_depth_summaryArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_variant_family_coverage",
+      "description": "\nCoverage of CRE-seq variant families (reference + motif knockouts / point mutants).\n\nPASS when >= 80% of families fully recovered AND zero families missing their reference.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "design_manifest_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Design Manifest Path"
+          }
+        },
+        "title": "tool_variant_family_coverageArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_library_summary_report",
+      "description": "\nComprehensive one-shot CRE-seq library QC report.\n\nRuns all applicable tools and returns overall_pass, failed_checks, warnings,\nand per-tool summaries.\n",
+      "inputSchema": {
+        "properties": {
+          "mapping_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mapping Table Path"
+          },
+          "plasmid_count_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Plasmid Count Path"
+          },
+          "design_manifest_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Design Manifest Path"
+          }
+        },
+        "title": "tool_library_summary_reportArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_process_library",
+      "description": "\nProcess a raw CRE-seq plasmid-DNA FASTQ against a barcode reference library.\n\nWrites mapping_table.tsv, plasmid_counts.tsv, and design_manifest.tsv to the\nupload directory so all QC tools can run without additional arguments.\n\nbarcode_end: \"3prime\" (default) or \"5prime\".\n",
+      "inputSchema": {
+        "properties": {
+          "fastq_path": {
+            "title": "Fastq Path",
+            "type": "string"
+          },
+          "reference_path": {
+            "title": "Reference Path",
+            "type": "string"
+          },
+          "barcode_len": {
+            "default": 10,
+            "title": "Barcode Len",
+            "type": "integer"
+          },
+          "barcode_end": {
+            "default": "3prime",
+            "title": "Barcode End",
+            "type": "string"
+          },
+          "max_mismatch": {
+            "default": 1,
+            "title": "Max Mismatch",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fastq_path",
+          "reference_path"
+        ],
+        "title": "tool_process_libraryArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_prepare_counts",
+      "description": "\nReshape raw barcode-level CRE-seq counts into the long-format table the\nactivity-calling pipeline expects.\n\nBridges the upstream counting step (which writes plasmid + RNA files in a\nbarcode-keyed wide format with one column per replicate) and the downstream\nnormalize_activity / call_active_elements tools (which expect one row per\nbarcode-replicate observation with canonical column names). Use this as\nthe first step in the post-counting pipeline.\n\nAlgorithm:\n    1. Inner-join plasmid and RNA files on (barcode, oligo_id)\n    2. Melt rna_count_rep1, rna_count_rep2, ... columns into long form\n    3. Rename to canonical schema; cast `replicate` to int\n\nArgs:\n    plasmid_counts_path: Path to plasmid_counts.tsv with columns\n        `barcode`, `oligo_id`, `dna_count`. Defaults to\n        ~/.creseq/uploads/plasmid_counts.tsv when omitted.\n    rna_counts_path: Path to rna_counts.tsv with columns `barcode`,\n        `oligo_id`, and one or more `rna_count_repN` columns (N = 1, 2, ...).\n        Defaults to ~/.creseq/uploads/rna_counts.tsv.\n    output_path: Where to write the long-format TSV. Defaults to\n        ~/.creseq/uploads/counts_long.tsv.\n\nReturns:\n    dict with keys:\n        rows (list[dict]): every output row as a JSON-serialisable dict\n            with fields `element_id` (str), `barcode_id` (str),\n            `replicate` (int, 1-indexed), `dna_counts` (int), `rna_counts` (int).\n        summary (dict): { n_rows: int, n_elements: int (unique element count),\n            n_replicates: int, output_path: str }.\n\nNotes:\n    - Output column renames: oligo_id -> element_id, barcode -> barcode_id,\n      dna_count -> dna_counts, rna_count_rep{N} (wide) -> rna_counts (long)\n      plus a new `replicate` column carrying N as an integer.\n    - Inner join: barcodes present in only one file are dropped silently.\n    - Output row count = n_input_rows * n_replicates.\n",
+      "inputSchema": {
+        "properties": {
+          "plasmid_counts_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Plasmid Counts Path"
+          },
+          "rna_counts_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rna Counts Path"
+          },
+          "output_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Output Path"
+          }
+        },
+        "title": "tool_prepare_countsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_normalize_activity",
+      "description": "\nCompute log2 RNA/DNA activity scores for each CRE.\n\nUse after QC has produced element-level DNA and RNA count tables.\n",
+      "inputSchema": {
+        "properties": {
+          "count_table_path": {
+            "title": "Count Table Path",
+            "type": "string"
+          },
+          "pseudocount": {
+            "default": 1.0,
+            "title": "Pseudocount",
+            "type": "number"
+          },
+          "dna_col": {
+            "default": "dna_counts",
+            "title": "Dna Col",
+            "type": "string"
+          },
+          "rna_col": {
+            "default": "rna_counts",
+            "title": "Rna Col",
+            "type": "string"
+          },
+          "element_col": {
+            "default": "element_id",
+            "title": "Element Col",
+            "type": "string"
+          }
+        },
+        "required": [
+          "count_table_path"
+        ],
+        "title": "tool_normalize_activityArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "call_active_elements",
+      "description": "\nClassify CRE-seq elements as active vs. inactive against an empirical null\nderived from negative-control elements.\n\nCalls regulatory activity using a robust median/MAD null distribution\nrather than mean/std so a single outlier control cannot inflate the scale.\nA Shapiro-Wilk test on the controls reports normality (the empirical\nz-test assumes it); BH-FDR is computed only over the test set so negative\ncontrols do not dilute the multiple-testing correction.\n\nAlgorithm (method='empirical'):\n    1. null_center = median(neg_control activities)\n    2. null_scale  = 1.4826 * MAD(neg_control activities)\n    3. Shapiro-Wilk normality check on controls; warns if p < 0.01\n    4. Per test element: zscore = (mean_activity - null_center) / null_scale\n    5. One-sided p-value (upper tail of standard normal)\n    6. BH-FDR adjustment over test elements only\n    7. active = (pvalue <= alpha) AND (fdr <= fdr_threshold)\n                AND (mean_activity > null_center)\n\nArgs:\n    activity_table_path: Path to a per-element activity table (TSV) with\n        required columns `element_id`, `mean_activity`, `std_activity`,\n        `n_barcodes`.\n    negative_controls: List of element_ids to use as the null. Need >=20\n        for reliable z-test; a warning fires below that.\n    fdr_threshold: BH q-value cutoff for the `active` flag. Default 0.05.\n        Typical range 0.01-0.10.\n    method: \"empirical\" (default) or \"glm\". The GLM negative-binomial\n        method is a stub \u2014 calling it raises NotImplementedError.\n    count_table_path: Reserved for the GLM method (ignored when\n        method='empirical').\n\nReturns:\n    dict with keys:\n        rows (list[dict]): every input row plus 5 new columns:\n            active (bool), pvalue (float|NaN), fdr (float|NaN),\n            fold_over_controls (float|NaN), zscore (float|NaN).\n            Negative controls carry NaN for p/fdr/z (excluded from testing\n            against themselves).\n        summary (dict): { n_total_elements, n_negative_controls,\n            n_test_elements, n_active, n_inactive, fdr_threshold, method,\n            null_distribution (dict with center, scale, estimator,\n            n_controls, shapiro_pvalue), active_summary (dict),\n            n_silencer_candidates, warnings (list[str]) }.\n\nSide effects:\n    Writes <activity_table>_classified.tsv next to the input.\n\nNotes:\n    - fold_over_controls = 2 ** (mean_activity - null_center) \u2014 linear-scale\n      enrichment over the control median.\n    - n_silencer_candidates counts elements significantly *below* the null\n      (potential repressors); they are not flagged as `active`.\n",
+      "inputSchema": {
+        "properties": {
+          "activity_table_path": {
+            "title": "Activity Table Path",
+            "type": "string"
+          },
+          "negative_controls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Negative Controls",
+            "type": "array"
+          },
+          "fdr_threshold": {
+            "default": 0.05,
+            "title": "Fdr Threshold",
+            "type": "number"
+          },
+          "method": {
+            "default": "empirical",
+            "title": "Method",
+            "type": "string"
+          },
+          "count_table_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Count Table Path"
+          }
+        },
+        "required": [
+          "activity_table_path",
+          "negative_controls"
+        ],
+        "title": "tool_call_active_elements_fullArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_rank_cre_candidates",
+      "description": "\nRank CRE candidates by activity strength and statistical confidence.\n",
+      "inputSchema": {
+        "properties": {
+          "activity_table_path": {
+            "title": "Activity Table Path",
+            "type": "string"
+          },
+          "top_n": {
+            "default": 20,
+            "title": "Top N",
+            "type": "integer"
+          },
+          "activity_col": {
+            "default": "log2_activity",
+            "title": "Activity Col",
+            "type": "string"
+          },
+          "q_col": {
+            "default": "q_value",
+            "title": "Q Col",
+            "type": "string"
+          }
+        },
+        "required": [
+          "activity_table_path"
+        ],
+        "title": "tool_rank_cre_candidatesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_prepare_rag_context",
+      "description": "\nPrepare top CREs and TF motif search terms for literature/API interpretation.\n",
+      "inputSchema": {
+        "properties": {
+          "ranked_table_path": {
+            "title": "Ranked Table Path",
+            "type": "string"
+          },
+          "top_n": {
+            "default": 10,
+            "title": "Top N",
+            "type": "integer"
+          },
+          "motif_col": {
+            "default": "top_motif",
+            "title": "Motif Col",
+            "type": "string"
+          },
+          "target_cell_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Cell Type"
+          },
+          "off_target_cell_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Off Target Cell Type"
+          }
+        },
+        "required": [
+          "ranked_table_path"
+        ],
+        "title": "tool_prepare_rag_contextArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_process_dna_counting",
+      "description": "\nCount DNA barcodes from a plasmid-pool FASTQ \u2192 overwrites plasmid_counts.tsv.\n\nRequires mapping_table.tsv from the association step.\nbarcode_end: \"3prime\" (default) or \"5prime\".\n",
+      "inputSchema": {
+        "properties": {
+          "fastq_path": {
+            "title": "Fastq Path",
+            "type": "string"
+          },
+          "barcode_len": {
+            "default": 20,
+            "title": "Barcode Len",
+            "type": "integer"
+          },
+          "barcode_end": {
+            "default": "3prime",
+            "title": "Barcode End",
+            "type": "string"
+          },
+          "max_mismatch": {
+            "default": 0,
+            "title": "Max Mismatch",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fastq_path"
+        ],
+        "title": "tool_process_dna_countingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_process_rna_counting",
+      "description": "\nCount RNA barcodes across one or more replicate FASTQs \u2192 writes rna_counts.tsv.\n\nRequires mapping_table.tsv from the association step.\nfastq_paths: list of FASTQ paths, one per replicate.\nrep_names: optional list of replicate labels (default: rep1, rep2, \u2026).\n",
+      "inputSchema": {
+        "properties": {
+          "fastq_paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fastq Paths",
+            "type": "array"
+          },
+          "rep_names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rep Names"
+          },
+          "barcode_len": {
+            "default": 20,
+            "title": "Barcode Len",
+            "type": "integer"
+          },
+          "barcode_end": {
+            "default": "3prime",
+            "title": "Barcode End",
+            "type": "string"
+          },
+          "max_mismatch": {
+            "default": 0,
+            "title": "Max Mismatch",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fastq_paths"
+        ],
+        "title": "tool_process_rna_countingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_activity_report",
+      "description": "\nNormalize DNA/RNA counts \u2192 compute log2(RNA/DNA) per oligo \u2192 call active CREs.\n\nSaves activity_results.tsv to the upload directory.\nUses z-test vs. negative controls when available; falls back to log2 > 1 threshold.\n",
+      "inputSchema": {
+        "properties": {
+          "dna_counts_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dna Counts Path"
+          },
+          "rna_counts_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rna Counts Path"
+          },
+          "design_manifest_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Design Manifest Path"
+          }
+        },
+        "title": "tool_activity_reportArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "extract_sequences",
+      "description": "\nSplit classified CRE-seq elements into active and background FASTA files\nsuitable for motif enrichment.\n\nBridges call_active_elements -> motif_enrichment by translating the\nclassification table into the two-FASTA contrast that Fisher's exact\nenrichment requires. Crucially, *negative controls are excluded from\nboth files* \u2014 they defined the null and would bias the contrast if\nplaced in the background.\n\nSelection rules:\n    active.fa     : rows where active == True\n    background.fa : rows where active == False AND pvalue is not NaN\n                    (i.e. inactive *test* elements; controls have NaN\n                    p-values and are filtered out here)\n\nArgs:\n    classified_table: Path to a TSV produced by call_active_elements\n        (must contain `element_id`, `active`, `pvalue` columns).\n    sequence_source: Path to a TSV with `element_id` and `sequence`\n        columns \u2014 typically the design manifest. The function auto-renames\n        `oligo_id` -> `element_id` if needed.\n    active_output: Path for the active sequences FASTA. Default \"active.fa\".\n    background_output: Path for the background FASTA. Default \"background.fa\".\n    gc_match: When True, sub-sample the background pool so its GC\n        distribution matches the active set bin-for-bin. Defaults to\n        False (every inactive test element used as background). Enable\n        this to remove spurious enrichment of GC-rich motifs (SP1, EGR1,\n        KLF family) that can ride along when active CREs are GC-richer\n        than random DNA.\n    gc_bin_size: GC-bin width for matching, in [0, 1]. Default 0.05 (20\n        bins). Smaller bins = stricter matching but a smaller usable\n        background pool.\n    n_per_active: Number of background sequences drawn per active\n        sequence within the matching bin. Default 1 (one-to-one).\n    random_state: Seed for reproducible sampling. Default 0.\n\nReturns:\n    dict with keys:\n        active_fasta (str): path written for active sequences\n        background_fasta (str): path written for background sequences\n        n_active (int): number of records in active.fa\n        n_background (int): number of records in background.fa\n        gc_matched (bool): whether GC matching was applied\n\nNotes:\n    - FASTA records use `element_id` as the header and the full sequence\n      on a single line (no line wrapping).\n    - Element IDs missing from the sequence source emit a UserWarning and\n      are skipped \u2014 the function does not crash on partial coverage.\n    - The active vs. background sets are disjoint by construction.\n    - When gc_match=True, a UserWarning fires if a GC bin needed a\n      nearest-bin fallback or sampling-with-replacement.\n",
+      "inputSchema": {
+        "properties": {
+          "classified_table": {
+            "title": "Classified Table",
+            "type": "string"
+          },
+          "sequence_source": {
+            "title": "Sequence Source",
+            "type": "string"
+          },
+          "active_output": {
+            "default": "active.fa",
+            "title": "Active Output",
+            "type": "string"
+          },
+          "background_output": {
+            "default": "background.fa",
+            "title": "Background Output",
+            "type": "string"
+          },
+          "gc_match": {
+            "default": false,
+            "title": "Gc Match",
+            "type": "boolean"
+          },
+          "gc_bin_size": {
+            "default": 0.05,
+            "title": "Gc Bin Size",
+            "type": "number"
+          },
+          "n_per_active": {
+            "default": 1,
+            "title": "N Per Active",
+            "type": "integer"
+          },
+          "random_state": {
+            "default": 0,
+            "title": "Random State",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "classified_table",
+          "sequence_source"
+        ],
+        "title": "tool_extract_sequencesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_motif_enrichment",
+      "description": "\nIdentify transcription factor binding motifs enriched in active CRE-seq\nelements relative to inactive ones.\n\nLoads position weight matrices from JASPAR, scans both strands of every\nsequence with a log-odds PSSM, and tests each motif for differential\noccurrence between the active and background sets using one-sided\nFisher's exact (alternative='greater'). P-values are corrected to FDRs\nvia Benjamini-Hochberg. The result tells you which TFs likely drive the\nobserved regulatory activity.\n\nAlgorithm:\n    1. Load motif PWMs from JASPAR (default: 879 vertebrate CORE motifs)\n    2. Build log-odds PSSMs (Biopython); for each sequence, scan forward\n       and reverse strands at the given relative-score threshold\n    3. Per motif build a 2x2 contingency table:\n                        hits   no-hits\n          active     |   a   |   b\n          background |   c   |   d\n    4. Fisher's exact, alternative='greater'\n    5. BH-FDR adjustment across all tested motifs\n    6. Sort by [fdr ASC, odds_ratio DESC]; OR is capped at 999.0\n\nArgs:\n    active_fasta: Path to FASTA of active sequences (from extract_sequences).\n    background_fasta: Path to FASTA of background sequences.\n    motif_database: pyjaspar release tag. Default \"JASPAR2024\".\n    collection: JASPAR collection name. Default \"CORE\" (curated, non-redundant).\n    tax_group: Taxonomic group filter. Default \"Vertebrates\".\n        Other valid values include \"Plants\", \"Insects\", \"Fungi\", \"Nematodes\".\n    score_threshold: PSSM relative-score cutoff in [0, 1]. 1.0 = perfect\n        consensus match; 0.7 is permissive; 0.8 (default) is balanced;\n        0.85-0.9 is conservative. Lower thresholds increase sensitivity\n        but inflate background hits.\n    output_path: Optional TSV destination. Defaults to a temp file.\n\nReturns:\n    dict with keys:\n        enrichment_table (str): path to the output TSV with columns\n            motif_id, tf_name, n_active_hits, n_background_hits,\n            n_active_total, n_background_total, odds_ratio, pvalue, fdr.\n        summary (str): natural-language summary naming the top\n            significant motifs (FDR < 0.05).\n\nNotes:\n    - Both strands are scanned because TF binding sites are\n      orientation-independent on duplex DNA.\n    - Empty input FASTAs produce an empty enrichment table with the\n      schema preserved (no crash).\n    - Sequences shorter than a motif's PWM length are skipped silently\n      for that motif.\n",
+      "inputSchema": {
+        "properties": {
+          "active_fasta": {
+            "title": "Active Fasta",
+            "type": "string"
+          },
+          "background_fasta": {
+            "title": "Background Fasta",
+            "type": "string"
+          },
+          "motif_database": {
+            "default": "JASPAR2024",
+            "title": "Motif Database",
+            "type": "string"
+          },
+          "collection": {
+            "default": "CORE",
+            "title": "Collection",
+            "type": "string"
+          },
+          "tax_group": {
+            "default": "Vertebrates",
+            "title": "Tax Group",
+            "type": "string"
+          },
+          "score_threshold": {
+            "default": 0.8,
+            "title": "Score Threshold",
+            "type": "number"
+          },
+          "output_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Output Path"
+          }
+        },
+        "required": [
+          "active_fasta",
+          "background_fasta"
+        ],
+        "title": "tool_motif_enrichmentArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "tool_plot_creseq",
+      "description": "\nGenerate publication-quality CRE-seq figures from analysis output tables.\n\nA single dispatcher routing to five plot types \u2014 pick whichever answers\nthe question you have:\n    - volcano             : effect-size vs. significance\n    - ranked_activity     : per-element activity, sorted\n    - replicate_correlation : reproducibility between replicates\n    - annotation_boxplot  : activity stratified by user-supplied category\n    - motif_dotplot       : top enriched TF motifs from motif_enrichment\n\nAll plots use a consistent palette (active=red #E63946, inactive=grey\n#BBBBBB, controls=blue #457B9D, highlights=teal #2A9D8F) and are written\nat 200 DPI with 14 pt titles / 12 pt axis labels / 8 pt legends.\n\nArgs:\n    data_file: TSV path. The required schema depends on plot_type:\n        volcano              : `mean_activity` + (`pvalue` or `fdr`)\n        ranked_activity      : `element_id` + `mean_activity` (+ `active`\n                               if you want bars colored)\n        replicate_correlation: `repN_activity` columns for at least\n                               two replicates (N = 1, 2, ...)\n        annotation_boxplot   : `element_id` + `mean_activity` (joins\n                               with annotation_file on element_id)\n        motif_dotplot        : `tf_name`, `odds_ratio`, `fdr`,\n                               `n_active_hits` (the motif_enrichment output)\n    plot_type: One of {\"volcano\", \"ranked_activity\",\n        \"replicate_correlation\", \"annotation_boxplot\", \"motif_dotplot\"}.\n    output_path: Destination PNG path. Default \"plot.png\".\n    highlight_ids: Optional list of element_ids to highlight in teal\n        (volcano, ranked_activity).\n    neg_control_ids: Optional list of element_ids to draw in blue\n        (volcano).\n    annotation_file: Required when plot_type='annotation_boxplot' \u2014\n        TSV with columns `element_id` and `annotation`.\n\nReturns:\n    dict with keys:\n        plot_path (str): absolute path to the saved PNG.\n        description (str): natural-language summary of the figure\n            (e.g. \"Volcano of 600 elements; 213 active at FDR<0.05\",\n            or \"Pearson r=0.87 across 600 elements\" for replicate plots).\n\nRaises:\n    ValueError: unknown plot_type, missing required columns for the\n        chosen plot, or annotation_file missing/invalid when required.\n\nNotes:\n    - Uses matplotlib's headless Agg backend, so it is safe to call\n      inside an MCP server without a display.\n    - The motif_dotplot falls back to a \"no significant motifs\" note\n      (still a valid PNG) if nothing reaches FDR < 0.05.\n",
+      "inputSchema": {
+        "properties": {
+          "data_file": {
+            "title": "Data File",
+            "type": "string"
+          },
+          "plot_type": {
+            "title": "Plot Type",
+            "type": "string"
+          },
+          "output_path": {
+            "default": "plot.png",
+            "title": "Output Path",
+            "type": "string"
+          },
+          "highlight_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Highlight Ids"
+          },
+          "neg_control_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Neg Control Ids"
+          },
+          "annotation_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Annotation File"
+          }
+        },
+        "required": [
+          "data_file",
+          "plot_type"
+        ],
+        "title": "tool_plot_creseqArguments",
+        "type": "object"
+      }
+    }
+  ]
+}
