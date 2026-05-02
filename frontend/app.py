@@ -1198,7 +1198,7 @@ Activity was called using a negative binomial GLM (DESeq2-style):
 
     st.divider()
     csv_buffer = io.StringIO()
-    display_df[display_cols].to_csv(csv_buffer, index=False)
+    display_df[[c for c in display_cols if c in display_df.columns]].to_csv(csv_buffer, index=False)
     st.download_button(
         label="⬇ Download results as CSV",
         data=csv_buffer.getvalue(),
@@ -1207,3 +1207,102 @@ Activity was called using a negative binomial GLM (DESeq2-style):
         type="primary",
         use_container_width=True,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: HELP
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "📖 Help":
+    st.header("Help & Documentation")
+    st.caption("How to use the CRE-seq Analyzer and what each tool does")
+
+    with st.expander("📋 Pipeline overview", expanded=True):
+        st.markdown("""
+The CRE-seq pipeline processes lentiMPRA / MPRA barcode sequencing data in four steps:
+
+```
+FASTQ reads
+    │
+    ▼
+1. Association  ──  mappy alignment + STARCODE barcode clustering
+    │                → mapping_table.tsv (barcode → oligo)
+    ▼
+2. DNA Counting  ──  count plasmid barcodes
+    │                → plasmid_counts.tsv
+    ▼
+3. RNA Counting  ──  count RNA barcodes (multiple replicates)
+    │                → rna_counts.tsv
+    ▼
+4. Activity      ──  log2(RNA/DNA), z-score vs. negative controls, BH-FDR
+                     → activity_results.tsv
+```
+
+Use the **📤 Upload** page to run the pipeline, then explore results in **📊 QC & Plots** and **📋 Results**.
+""")
+
+    with st.expander("💬 Chat agent — available tools"):
+        st.markdown("""
+The Chat agent uses Claude + the MCP server. You can ask it to run any of these tools by name or by plain-language description:
+
+| Tool | What it does |
+|---|---|
+| `tool_library_summary_report` | Run all 8 library QC checks at once |
+| `tool_barcode_complexity` | Barcodes-per-oligo distribution |
+| `tool_oligo_recovery` | Fraction of oligos with ≥10 barcodes |
+| `tool_synthesis_error_profile` | Mismatch / indel / soft-clip rates |
+| `tool_barcode_collision_analysis` | Barcodes mapping to >1 oligo |
+| `tool_barcode_uniformity` | Coefficient of variation across barcodes |
+| `tool_plasmid_depth_summary` | DNA count distribution |
+| `tool_gc_content_bias` | Recovery rate vs. GC% |
+| `tool_variant_family_coverage` | Reference + mutant family completeness |
+| `tool_normalize_activity` | Compute log₂(RNA/DNA) per element |
+| `tool_call_active_elements_full` | Call active CREs with FDR correction |
+| `tool_rank_cre_candidates` | Rank by activity + confidence |
+| `tool_motif_enrichment_summary` | Fisher's exact test on JASPAR motifs |
+| `tool_plot_creseq` | Volcano / activity histogram / motif bar chart |
+| `tool_search_pubmed` | Search NCBI PubMed for relevant literature |
+| `tool_search_jaspar_motif` | Look up TF motif in JASPAR database |
+| `tool_search_encode_tf` | Look up TF experiments in ENCODE |
+
+**Example prompts:**
+- *"Run library QC and tell me which checks failed"*
+- *"Show me a volcano plot of my results"*
+- *"Which transcription factor motifs are enriched in the active elements?"*
+- *"What does SP1 do? Search PubMed for SP1 and enhancer activity"*
+""")
+
+    with st.expander("📂 Output files"):
+        st.markdown("""
+All output files are written to `~/Desktop/creseq_outputs/`:
+
+| File | Contents |
+|---|---|
+| `mapping_table.tsv` | barcode → oligo mapping with CIGAR, MAPQ, category |
+| `plasmid_counts.tsv` | DNA barcode counts aggregated to oligo level |
+| `design_manifest.tsv` | oligo metadata (category, sequence, variant family) |
+| `rna_counts.tsv` | RNA barcode counts per oligo per replicate |
+| `activity_results.tsv` | log₂ ratio, p-value, FDR, active flag per element |
+| `variant_delta_scores.tsv` | Δlog₂ (mutant − ref) per mutant, with FDR |
+| `library_qc_summary.csv` | per-check pass/fail summary (from QC & Plots download) |
+""")
+
+    with st.expander("❓ FAQ"):
+        st.markdown("""
+**Q: I only have barcode counts already — do I need to run association again?**
+A: No. Toggle "Skip association" on the Upload page and point to your existing `mapping_table.tsv`.
+
+**Q: My activity results don't show motif columns. Why?**
+A: Go to the Motif Analysis tab and click "▶ Run Motif Enrichment", or ask the Chat agent to "annotate motifs".
+
+**Q: How are elements called active?**
+A: log₂(RNA/DNA) is z-scored against scrambled negative controls. Elements with BH-FDR < threshold (default 5%) AND log₂FC above the minimum cutoff (default 1.0) are called active.
+
+**Q: What sequencing format is expected?**
+A: 15 bp barcode reads in separate index FASTQs (ENCODE format) or embedded in R1 headers (MiSeq format). Both are auto-detected.
+
+**Q: Where does the paper context come from?**
+A: The Chat agent is primed with an excerpt from Agarwal et al. 2025 (Nature), which describes the lentiMPRA protocol this tool is designed for.
+""")
+
+    st.divider()
+    st.caption("Built for BioEng 134 Final Project · [Agarwal et al. 2025, Nature](https://www.nature.com/)")
