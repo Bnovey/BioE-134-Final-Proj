@@ -983,17 +983,34 @@ elif page == "📋 Results":
 
     st.subheader("Element Summary Table")
 
-    display_cols = [c for c in ["element_id", "chrom", "start", "end", "dna_counts", "rna_counts", "log2_ratio", "pval", "active", "chromatin_state", "top_motif"] if c in df.columns]
+    display_cols = [c for c in ["element_id", "chrom", "start", "end", "dna_counts", "rna_counts", "log2_ratio", "fdr", "pval", "active", "designed_category", "chromatin_state", "top_motif"] if c in df.columns]
 
-    filter_active = st.checkbox("Show active elements only", value=False)
-    display_df = df[df["active"]] if filter_active and "active" in df.columns else df
+    filt_col1, filt_col2, filt_col3 = st.columns([2, 1, 1])
+    search_text = filt_col1.text_input("🔍 Search element ID", placeholder="e.g. ENSR00001…")
+    activity_filter = filt_col2.selectbox("Activity", ["All", "Active only", "Inactive only"], index=0)
+    sort_by_fdr = filt_col3.checkbox("Sort by FDR ↑", value=False, help="Sort rows by FDR ascending (most significant first)")
 
+    display_df = df.copy()
+    if search_text:
+        id_col = "element_id" if "element_id" in display_df.columns else display_df.columns[0]
+        display_df = display_df[display_df[id_col].astype(str).str.contains(search_text, case=False, na=False)]
+    if activity_filter == "Active only" and "active" in display_df.columns:
+        display_df = display_df[display_df["active"]]
+    elif activity_filter == "Inactive only" and "active" in display_df.columns:
+        display_df = display_df[~display_df["active"]]
+    if sort_by_fdr:
+        fdr_col = "fdr" if "fdr" in display_df.columns else ("pval" if "pval" in display_df.columns else None)
+        if fdr_col:
+            display_df = display_df.sort_values(fdr_col, ascending=True)
+
+    st.caption(f"Showing {len(display_df):,} of {len(df):,} elements")
     st.dataframe(
-        display_df[display_cols].reset_index(drop=True),
+        display_df[[c for c in display_cols if c in display_df.columns]].reset_index(drop=True),
         use_container_width=True,
         column_config={
             "active": st.column_config.CheckboxColumn("Active"),
             "log2_ratio": st.column_config.NumberColumn("log₂ ratio", format="%.3f"),
+            "fdr": st.column_config.NumberColumn("FDR", format="%.4f"),
             "pval": st.column_config.NumberColumn("p-value", format="%.4f"),
         },
     )
