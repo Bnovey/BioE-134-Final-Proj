@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 import math
+import time
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -272,8 +273,25 @@ if page == "📤 Upload":
         from creseq_mcp.processing.counting import process_dna_counting, process_rna_counting
         from creseq_mcp.qc.activity import normalize_and_compute_ratios, call_activity
 
-        progress = st.progress(0, text="Step 1/4 — Association (mappy + STARCODE)…")
+        STEPS = ["Association", "DNA Counting", "RNA Counting", "Activity Analysis"]
+        step_status = {s: ("⏳", "—") for s in STEPS}  # (icon, elapsed)
+
+        status_table = st.empty()
+
+        def _render_status():
+            rows = "| Step | Status | Time |\n|---|---|---|\n"
+            for s in STEPS:
+                icon, elapsed = step_status[s]
+                rows += f"| {s} | {icon} | {elapsed} |\n"
+            status_table.markdown(rows)
+
+        _render_status()
+
         try:
+            # ── Step 1: Association ──────────────────────────────────────────
+            step_status["Association"] = ("🔄 Running…", "—")
+            _render_status()
+            _t0 = time.time()
             if skip_assoc:
                 import shutil as _shutil
                 _dest = UPLOAD_DIR / "mapping_table.tsv"
@@ -284,7 +302,6 @@ if page == "📤 Upload":
                     if existing_manifest_path.resolve() != _mdest.resolve():
                         _shutil.copy(existing_manifest_path, _mdest)
                 assoc_stats = None
-                progress.progress(25, text="Steps 2+3 — DNA and RNA counting (parallel)…")
             else:
                 assoc_stats = run_association(
                     fastq_r1=assoc_r1_path,
@@ -297,11 +314,17 @@ if page == "📤 Upload":
                     min_frac=float(min_frac),
                     mapq_threshold=int(mapq_thr),
                 )
-                progress.progress(25, text="Steps 2+3 — DNA and RNA counting (parallel)…")
+            step_status["Association"] = ("✅", f"{time.time()-_t0:.1f}s")
+            _render_status()
 
+            # ── Steps 2+3: Counting (parallel) ───────────────────────────────
+            step_status["DNA Counting"] = ("🔄 Running…", "—")
+            step_status["RNA Counting"] = ("🔄 Running…", "—")
+            _render_status()
             from concurrent.futures import ThreadPoolExecutor
             _mapping_table = UPLOAD_DIR / "mapping_table.tsv"
             _bc_len = int(bc_len)
+            _t1 = time.time()
             with ThreadPoolExecutor(max_workers=2) as _ex:
                 _dna_fut = _ex.submit(
                     process_dna_counting, dna_path, _mapping_table, UPLOAD_DIR,
@@ -313,26 +336,32 @@ if page == "📤 Upload":
                 )
                 dna_stats = _dna_fut.result()
                 rna_stats = _rna_fut.result()
-            progress.progress(75, text="Step 4/4 — Activity analysis…")
+            _count_elapsed = f"{time.time()-_t1:.1f}s"
+            step_status["DNA Counting"] = ("✅", _count_elapsed)
+            step_status["RNA Counting"] = ("✅", _count_elapsed)
+            _render_status()
 
+            # ── Step 4: Activity analysis ─────────────────────────────────────
+            step_status["Activity Analysis"] = ("🔄 Running…", "—")
+            _render_status()
+            _t3 = time.time()
             manifest_path = UPLOAD_DIR / "design_manifest.tsv"
             _oligo_df, norm_summary = normalize_and_compute_ratios(
                 UPLOAD_DIR / "plasmid_counts.tsv",
                 UPLOAD_DIR / "rna_counts.tsv",
                 manifest_path if manifest_path.exists() else None,
             )
-            # Apply min DNA count filter before activity calling
             if int(act_min_dna) > 0 and "dna_counts" in _oligo_df.columns:
                 _oligo_df = _oligo_df[_oligo_df["dna_counts"] >= int(act_min_dna)].copy()
             results_df, act_summary = call_activity(
                 _oligo_df,
                 fdr_threshold=float(act_fdr_threshold),
             )
-            # Apply log2FC filter
             if float(act_log2fc_min) > 0 and "log2_ratio" in results_df.columns:
                 results_df.loc[results_df["log2_ratio"] < float(act_log2fc_min), "active"] = False
             results_df.to_csv(UPLOAD_DIR / "activity_results.tsv", sep="\t", index=False)
-            progress.progress(100, text="Done!")
+            step_status["Activity Analysis"] = ("✅", f"{time.time()-_t3:.1f}s")
+            _render_status()
 
             st.success("All steps complete — go to Chat to run QC or QC & Plots to see results.")
             c1, c2, c3, c4, c5 = st.columns(5)
@@ -352,7 +381,10 @@ if page == "📤 Upload":
                     st.warning(w)
 
         except Exception as exc:
-            progress.empty()
+            for s in STEPS:
+                if step_status[s][0].startswith("🔄"):
+                    step_status[s] = ("❌", "failed")
+            _render_status()
             st.error(f"Pipeline failed: {exc}")
 
     # ── File status ──────────────────────────────────────────────────────────
