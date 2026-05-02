@@ -488,7 +488,27 @@ if page == "💬 Chat":
             for img_path in msg.get("images", []):
                 st.image(img_path)
 
-    if prompt := st.chat_input("Run library QC, annotate motifs, show volcano plot…"):
+    # ── Suggested prompt chips ────────────────────────────────────────────────
+    SUGGESTED_PROMPTS = [
+        "Run library QC",
+        "Show volcano plot",
+        "Annotate motifs",
+        "Rank top CREs",
+        "Call active elements",
+        "Summarize results",
+    ]
+    _pending = st.session_state.pop("_pending_chat", None)
+
+    chip_cols = st.columns(len(SUGGESTED_PROMPTS))
+    for _col, _chip in zip(chip_cols, SUGGESTED_PROMPTS):
+        if _col.button(_chip, key=f"chip_{_chip}", use_container_width=True):
+            st.session_state["_pending_chat"] = _chip
+            st.rerun()
+
+    _typed = st.chat_input("Run library QC, annotate motifs, show volcano plot…")
+    prompt = _pending or _typed
+
+    if prompt:
         with st.chat_message("user"):
             st.markdown(prompt)
         st.session_state.chat_messages.append(
