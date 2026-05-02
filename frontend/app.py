@@ -1018,19 +1018,40 @@ elif page == "📋 Results":
     st.divider()
 
     with st.expander("📌 Enrichment Summary"):
-        st.markdown(
-            """
-**Chromatin state enrichment** (active vs. inactive CREs):
-- Active Enhancer: OR = 3.2, p < 0.001 ✅
-- Promoter-flanking: OR = 1.8, p = 0.021 ✅
-- Heterochromatin: OR = 0.2, p < 0.001 (depleted)
+        _has_cat = "designed_category" in df.columns or "chromatin_state" in df.columns
+        _cat_col = "designed_category" if "designed_category" in df.columns else ("chromatin_state" if "chromatin_state" in df.columns else None)
+        if "active" in df.columns and _cat_col:
+            _cat_summary = (
+                df.groupby(_cat_col)["active"]
+                .agg(active="sum", total="count")
+                .assign(active_rate=lambda x: x["active"] / x["total"])
+                .sort_values("active_rate", ascending=False)
+                .reset_index()
+            )
+            st.markdown(f"**Active rate by {_cat_col}** ({len(df):,} elements total):")
+            for _, row in _cat_summary.iterrows():
+                bar = "█" * int(row["active_rate"] * 20) + "░" * (20 - int(row["active_rate"] * 20))
+                st.markdown(
+                    f"- **{row[_cat_col]}**: {row['active']:,}/{row['total']:,} active "
+                    f"({row['active_rate']:.1%})  `{bar}`"
+                )
+        else:
+            st.info("No category or chromatin state column found — run the full pipeline for enrichment stats.")
 
-**Top enriched TF motifs:**
-- SP1 (2.8×), AP1/FOSL2 (2.1×), NRF1 (1.9×)
+        if "log2_ratio" in df.columns and "active" in df.columns and n_active > 0:
+            _top5 = df[df["active"]].nlargest(5, "log2_ratio")[["element_id" if "element_id" in df.columns else df.columns[0], "log2_ratio"]]
+            st.markdown("**Top 5 most active CREs:**")
+            for _, row in _top5.iterrows():
+                st.markdown(f"- `{row.iloc[0]}` — log₂ = {row['log2_ratio']:.2f}")
 
-**Regulatory variants:** 7 elements with allele-specific activity; 3 overlap eQTLs.
-"""
-        )
+        if "top_motif" in df.columns and "active" in df.columns:
+            _motif_freq = (
+                df[df["active"]]["top_motif"].value_counts().head(5)
+            )
+            if not _motif_freq.empty:
+                st.markdown("**Most common motifs in active CREs:**")
+                for motif, cnt in _motif_freq.items():
+                    st.markdown(f"- {motif}: {cnt:,} elements")
 
     with st.expander("🧮 Statistical Model"):
         st.markdown(
