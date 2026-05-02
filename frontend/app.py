@@ -896,10 +896,27 @@ if page == "📊 QC & Plots":
         else:
             _motif_act_df = pd.DataFrame()
 
+        if "motif_results" not in st.session_state:
+            st.session_state.motif_results = None
+
+        _motif_run_col, _ = st.columns([1, 3])
+        if _motif_run_col.button("▶ Run Motif Enrichment", disabled=not _act_motif_path.exists()):
+            with st.spinner("Running motif enrichment analysis…"):
+                try:
+                    from creseq_mcp.stats.library import motif_enrichment_summary
+                    _me_df, _me_summary = motif_enrichment_summary(str(_act_motif_path))
+                    st.session_state.motif_results = (_me_df, _me_summary)
+                    st.success(f"Motif enrichment complete — {len(_me_df)} motifs tested.")
+                except Exception as _e:
+                    st.error(f"Motif enrichment failed: {_e}")
+
         if "top_motif" in _motif_act_df.columns and "active" in _motif_act_df.columns:
             try:
                 from creseq_mcp.stats.library import motif_enrichment_summary
-                motif_enr_df, motif_enr_summary = motif_enrichment_summary(str(_act_motif_path))
+                if st.session_state.motif_results is not None:
+                    motif_enr_df, motif_enr_summary = st.session_state.motif_results
+                else:
+                    motif_enr_df, motif_enr_summary = motif_enrichment_summary(str(_act_motif_path))
                 st.info("Showing real motif enrichment from activity_results.tsv", icon="✅")
 
                 fig = px.bar(
@@ -932,12 +949,14 @@ if page == "📊 QC & Plots":
 
             except Exception as e:
                 st.error(f"Motif enrichment failed: {e}")
-        else:
+        elif _act_motif_path.exists():
             st.info(
-                "No motif annotations found. Ask the agent to **annotate motifs** "
-                "(Chat → 'annotate motifs for my data') to enable this tab.",
+                "Activity results found but no motif annotations yet. "
+                "Click **▶ Run Motif Enrichment** above, or go to Chat → 'Annotate motifs'.",
                 icon="ℹ️",
             )
+        else:
+            st.info("No activity results yet. Complete the Upload pipeline first.", icon="ℹ️")
 
     # ── Variant Effects ─────────────────────────────────────────────────────
     with tab_variant:
