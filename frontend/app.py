@@ -438,6 +438,7 @@ async def _agent_turn(user_text: str, history: list) -> dict:
             messages = list(history) + [{"role": "user", "content": user_text}]
             charts: list = []
             images: list = []
+            tool_log: list[dict] = []
 
             while True:
                 response = await client.messages.create(
@@ -449,7 +450,7 @@ async def _agent_turn(user_text: str, history: list) -> dict:
                 )
                 if response.stop_reason == "end_turn":
                     text = next((b.text for b in response.content if hasattr(b, "text")), "")
-                    return {"text": text, "charts": charts, "images": images}
+                    return {"text": text, "charts": charts, "images": images, "tool_log": tool_log}
 
                 if response.stop_reason == "tool_use":
                     messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
@@ -460,6 +461,8 @@ async def _agent_turn(user_text: str, history: list) -> dict:
                         result = await session.call_tool(block.name, block.input)
                         result_text = result.content[0].text if result.content else "{}"
                         _extract_charts(block.name, result_text, charts, images)
+                        snippet = result_text[:200] + ("…" if len(result_text) > 200 else "")
+                        tool_log.append({"name": block.name, "inputs": block.input, "result": snippet})
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
@@ -469,7 +472,7 @@ async def _agent_turn(user_text: str, history: list) -> dict:
                 else:
                     break
 
-    return {"text": "", "charts": charts, "images": images}
+    return {"text": "", "charts": charts, "images": images, "tool_log": []}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -487,6 +490,13 @@ if page == "💬 Chat":
                 st.plotly_chart(fig, use_container_width=True)
             for img_path in msg.get("images", []):
                 st.image(img_path)
+            if msg["role"] == "assistant" and msg.get("tool_log"):
+                with st.expander(f"🔧 Tools used ({len(msg['tool_log'])})"):
+                    for entry in msg["tool_log"]:
+                        st.markdown(f"**`{entry['name']}`**")
+                        if entry["inputs"]:
+                            st.json(entry["inputs"], expanded=False)
+                        st.caption(entry["result"])
 
     # ── Suggested prompt chips ────────────────────────────────────────────────
     SUGGESTED_PROMPTS = [
@@ -529,12 +539,20 @@ if page == "💬 Chat":
                 st.plotly_chart(fig, use_container_width=True)
             for img_path in result["images"]:
                 st.image(img_path)
+            if result.get("tool_log"):
+                with st.expander(f"🔧 Tools used ({len(result['tool_log'])})"):
+                    for entry in result["tool_log"]:
+                        st.markdown(f"**`{entry['name']}`**")
+                        if entry["inputs"]:
+                            st.json(entry["inputs"], expanded=False)
+                        st.caption(entry["result"])
 
         st.session_state.chat_messages.append({
             "role": "assistant",
             "content": result["text"],
             "charts": result["charts"],
             "images": result["images"],
+            "tool_log": result.get("tool_log", []),
         })
 
 
