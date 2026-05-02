@@ -55,7 +55,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Navigation",
-        ["📤 Upload", "📊 QC & Plots", "📋 Results", "💬 Chat"],
+        ["📤 Upload", "📊 QC & Plots", "📋 Results", "💬 Chat", "📖 Help"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -64,6 +64,35 @@ with st.sidebar:
         st.info(f"**{n_elements:,} elements** loaded from activity_results.tsv")
     else:
         st.warning("No results yet — complete the Upload pipeline first.")
+
+    st.divider()
+    if "confirm_reset" not in st.session_state:
+        st.session_state.confirm_reset = False
+
+    if st.session_state.confirm_reset:
+        st.warning("This will delete all output files in the outputs folder.")
+        col_yes, col_no = st.columns(2)
+        if col_yes.button("✅ Yes, clear", use_container_width=True):
+            import shutil as _shutil
+            for _f in UPLOAD_DIR.iterdir():
+                try:
+                    _f.unlink()
+                except Exception:
+                    pass
+            st.session_state.data = pd.DataFrame()
+            st.session_state.analysis_run = False
+            st.session_state.chat_messages = []
+            st.session_state.qc_report = None
+            st.session_state.motif_results = None
+            st.session_state.confirm_reset = False
+            st.rerun()
+        if col_no.button("❌ Cancel", use_container_width=True):
+            st.session_state.confirm_reset = False
+            st.rerun()
+    else:
+        if st.button("🗑 Clear all outputs", use_container_width=True):
+            st.session_state.confirm_reset = True
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
