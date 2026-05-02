@@ -1014,11 +1014,51 @@ if page == "📊 QC & Plots":
                 mime="text/tab-separated-values",
             )
         else:
-            st.info(
-                "No variant delta scores yet. Ask the agent to compute them "
-                "(Chat → 'compute variant delta scores') or run tool_variant_delta_scores.",
-                icon="ℹ️",
-            )
+            _act_path_v = UPLOAD_DIR / "activity_results.tsv"
+            _can_compute = _act_path_v.exists()
+
+            if _can_compute:
+                _v_col, _ = st.columns([1, 3])
+                if _v_col.button("▶ Compute Variant Delta Scores"):
+                    with st.spinner("Computing variant delta scores…"):
+                        try:
+                            _act_v = pd.read_csv(_act_path_v, sep="\t")
+                            _id_col = "element_id" if "element_id" in _act_v.columns else "oligo_id"
+                            # Derive variant_family / is_reference from oligo ID naming convention
+                            # Assumes: {gene}_{ref} or {gene}_{mutation} — reference has "ref" in last token
+                            if "variant_family" not in _act_v.columns:
+                                _act_v["variant_family"] = _act_v[_id_col].astype(str).str.rsplit("_", n=1).str[0]
+                            if "is_reference" not in _act_v.columns:
+                                _act_v["is_reference"] = _act_v[_id_col].astype(str).str.lower().str.endswith("_ref")
+
+                            _ref = _act_v[_act_v["is_reference"]][["variant_family", "log2_ratio"]].rename(
+                                columns={"log2_ratio": "ref_log2"}
+                            )
+                            _mut = _act_v[~_act_v["is_reference"]]
+                            _delta = _mut.merge(_ref, on="variant_family", how="inner")
+                            _delta["delta_log2"] = _delta["log2_ratio"] - _delta["ref_log2"]
+                            _delta.rename(columns={"log2_ratio": "mutant_log2"}, inplace=True)
+
+                            # FDR on delta scores via empirical permutation-style ranking
+                            from scipy import stats as _scipy_stats
+                            _z = (_delta["delta_log2"] - _delta["delta_log2"].mean()) / max(_delta["delta_log2"].std(), 1e-9)
+                            _pvals = [2 * _scipy_stats.norm.sf(abs(z)) for z in _z]
+                            from creseq_mcp.qc.activity import _bh_fdr
+                            _delta["pval"] = _pvals
+                            _delta["fdr"] = _bh_fdr(_pvals)
+                            _delta["significant"] = _delta["fdr"] < 0.05
+
+                            _delta.to_csv(_delta_path, sep="\t", index=False)
+                            st.success(f"Computed delta scores for {len(_delta):,} mutant–reference pairs.")
+                            st.rerun()
+                        except Exception as _ve:
+                            st.error(f"Delta score computation failed: {_ve}")
+            else:
+                st.info(
+                    "No activity results found. Complete the Upload pipeline first, "
+                    "then click '▶ Compute Variant Delta Scores'.",
+                    icon="ℹ️",
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
