@@ -640,6 +640,29 @@ if page == "📊 QC & Plots":
             if "qc_report" not in st.session_state:
                 st.session_state.qc_report = None
 
+            with st.expander("⚙️ QC thresholds"):
+                qc_thr_col1, qc_thr_col2, qc_thr_col3 = st.columns(3)
+                qc_min_barcodes = qc_thr_col1.number_input(
+                    "Min median barcodes/oligo",
+                    min_value=1, max_value=50, value=5,
+                    help="barcode_complexity check: minimum acceptable median barcodes per oligo.",
+                )
+                qc_min_recovery = qc_thr_col2.number_input(
+                    "Min oligo recovery fraction",
+                    min_value=0.1, max_value=1.0, value=0.8, step=0.05, format="%.2f",
+                    help="oligo_recovery check: fraction of oligos that must reach ≥10 barcodes.",
+                )
+                qc_max_collision = qc_thr_col3.number_input(
+                    "Max collision rate",
+                    min_value=0.0, max_value=0.5, value=0.05, step=0.01, format="%.2f",
+                    help="barcode_collision_analysis check: max fraction of barcodes mapping to >1 oligo.",
+                )
+                _qc_thresholds = {
+                    "barcode_complexity": {"min_median_barcodes": int(qc_min_barcodes)},
+                    "oligo_recovery": {"min_recovery_fraction": float(qc_min_recovery)},
+                    "barcode_collision_analysis": {"max_collision_rate": float(qc_max_collision)},
+                }
+
             col_run, col_clear = st.columns([1, 4])
             if col_run.button("▶ Run Library QC"):
                 with st.spinner("Running all QC checks…"):
@@ -648,6 +671,7 @@ if page == "📊 QC & Plots":
                         qc_results = library_summary_report(
                             str(_mt), str(_pc),
                             str(_dm) if _dm.exists() else None,
+                            thresholds_config=_qc_thresholds,
                         )
                         _, report_summary = qc_results["_report"]
                         st.session_state.qc_report = (qc_results, report_summary)
