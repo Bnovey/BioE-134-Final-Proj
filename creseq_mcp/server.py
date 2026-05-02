@@ -813,5 +813,94 @@ def tool_variant_delta_scores(
     }
 
 
+@mcp.tool()
+def tool_export_qc_html(
+    mapping_table_path: str | None = None,
+    plasmid_count_path: str | None = None,
+    design_manifest_path: str | None = None,
+    output_path: str | None = None,
+) -> dict:
+    """
+    Run all library QC checks and export a self-contained HTML report.
+
+    Runs library_summary_report(), then generates an HTML file with:
+    - Overall pass/fail banner
+    - Per-check summary table (check name, pass, key metrics)
+    - One section per check with its scalar result values
+
+    The HTML is self-contained and can be opened in any browser without
+    additional dependencies.
+
+    Returns the path to the saved HTML report and the overall pass/fail status.
+    """
+    import html as _html
+
+    mt = _path(mapping_table_path, "mapping_table.tsv")
+    pc = _path(plasmid_count_path, "plasmid_counts.tsv")
+    dm = _path(design_manifest_path, "design_manifest.tsv") if (
+        design_manifest_path or (UPLOAD_DIR / "design_manifest.tsv").exists()
+    ) else None
+
+    if not Path(mt).exists():
+        return {"error": f"mapping_table.tsv not found at {mt}"}
+    if not Path(pc).exists():
+        return {"error": f"plasmid_counts.tsv not found at {pc}"}
+
+    qc_results = library_summary_report(mt, pc, dm)
+    _, report_summary = qc_results["_report"]
+    overall_pass = report_summary.get("overall_pass", False)
+    failed = report_summary.get("failed_checks", [])
+
+    tool_labels = {
+        "barcode_complexity": "Barcode Complexity",
+        "oligo_recovery": "Oligo Recovery",
+        "synthesis_error_profile": "Synthesis Errors",
+        "barcode_collision_analysis": "Barcode Collisions",
+        "barcode_uniformity": "Barcode Uniformity",
+        "plasmid_depth_summary": "Plasmid Depth",
+        "gc_content_bias": "GC Content Bias",
+        "variant_family_coverage": "Variant Family Coverage",
+    }
+
+    banner_color = "#27ae60" if overall_pass else "#e74c3c"
+    banner_text = "✅ PASS — all checks passed" if overall_pass else f"❌ FAIL — failed: {', '.join(failed)}"
+
+    rows_html = ""
+    detail_sections = ""
+    for tool_key, label in tool_labels.items():
+        res = qc_results.get(tool_key, (None, {}))[1]
+        passed = res.get("pass", None)
+        badge = "✅" if passed else ("❌" if passed is False else "⚪")
+        rows_html += f"<tr><td>{_html.escape(label)}</td><td>{badge}</td></tr>\n"
+
+        scalar_items = {k: v for k, v in res.items() if k not in ("pass",) and not isinstance(v, (dict, list))}
+        if scalar_items:
+            items_html = "".join(f"<li><b>{_html.escape(str(k))}:</b> {_html.escape(str(v))}</li>" for k, v in scalar_items.items())
+            detail_sections += f"<h3>{badge} {_html.escape(label)}</h3><ul>{items_html}</ul>\n"
+
+    html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>CRE-seq Library QC Report</title>
+<style>body{{font-family:sans-serif;max-width:900px;margin:40px auto;padding:0 20px}}
+.banner{{background:{banner_color};color:white;padding:16px;border-radius:6px;font-size:1.2em;margin-bottom:24px}}
+table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ddd;padding:8px;text-align:left}}
+th{{background:#f4f4f4}}h2{{margin-top:32px}}</style></head>
+<body>
+<h1>CRE-seq Library QC Report</h1>
+<div class="banner">{banner_text}</div>
+<h2>Summary</h2>
+<table><tr><th>Check</th><th>Result</th></tr>{rows_html}</table>
+<h2>Details</h2>{detail_sections}
+</body></html>"""
+
+    out = Path(output_path) if output_path else UPLOAD_DIR / "qc_report.html"
+    out.write_text(html_content)
+    return {
+        "overall_pass": overall_pass,
+        "failed_checks": failed,
+        "report_path": str(out),
+        "n_checks_run": len(tool_labels),
+    }
+
+
 if __name__ == "__main__":
     mcp.run()
