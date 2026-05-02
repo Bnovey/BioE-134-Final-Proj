@@ -168,6 +168,25 @@ if page == "📤 Upload":
         min_frac   = adv_col4.number_input("Min mapping fraction", min_value=0.1, max_value=1.0, value=0.5, step=0.05)
         mapq_thr   = adv_col5.number_input("Min MAPQ", min_value=0, max_value=60, value=20)
 
+    # ── Activity calling options ──────────────────────────────────────────────
+    with st.expander("Activity calling options"):
+        act_col1, act_col2, act_col3 = st.columns(3)
+        act_fdr_threshold = act_col1.number_input(
+            "FDR threshold",
+            min_value=0.001, max_value=0.20, value=0.05, step=0.005, format="%.3f",
+            help="Benjamini–Hochberg FDR cutoff for calling an element active. Lower = more stringent.",
+        )
+        act_log2fc_min = act_col2.number_input(
+            "Min log₂ fold-change",
+            min_value=0.0, max_value=5.0, value=1.0, step=0.1, format="%.1f",
+            help="Elements below this log₂(RNA/DNA) are not called active regardless of p-value.",
+        )
+        act_min_dna = act_col3.number_input(
+            "Min DNA count per element",
+            min_value=0, max_value=100, value=10,
+            help="Elements with fewer than this many plasmid reads are excluded from activity calling.",
+        )
+
     # ── Resolve and validate paths ───────────────────────────────────────────
     assoc_r1_path  = _resolve(assoc_r1_str)
     assoc_r2_path  = _resolve(assoc_r2_str)
@@ -251,7 +270,7 @@ if page == "📤 Upload":
     if st.button("▶ Process all files", type="primary", use_container_width=True, disabled=not ready):
         from creseq_mcp.processing.association import run_association
         from creseq_mcp.processing.counting import process_dna_counting, process_rna_counting
-        from creseq_mcp.qc.activity import activity_report
+        from creseq_mcp.qc.activity import normalize_and_compute_ratios, call_activity
 
         progress = st.progress(0, text="Step 1/4 — Association (mappy + STARCODE)…")
         try:
@@ -297,12 +316,22 @@ if page == "📤 Upload":
             progress.progress(75, text="Step 4/4 — Activity analysis…")
 
             manifest_path = UPLOAD_DIR / "design_manifest.tsv"
-            _, act_summary = activity_report(
+            _oligo_df, norm_summary = normalize_and_compute_ratios(
                 UPLOAD_DIR / "plasmid_counts.tsv",
                 UPLOAD_DIR / "rna_counts.tsv",
                 manifest_path if manifest_path.exists() else None,
-                upload_dir=UPLOAD_DIR,
             )
+            # Apply min DNA count filter before activity calling
+            if int(act_min_dna) > 0 and "dna_counts" in _oligo_df.columns:
+                _oligo_df = _oligo_df[_oligo_df["dna_counts"] >= int(act_min_dna)].copy()
+            results_df, act_summary = call_activity(
+                _oligo_df,
+                fdr_threshold=float(act_fdr_threshold),
+            )
+            # Apply log2FC filter
+            if float(act_log2fc_min) > 0 and "log2_ratio" in results_df.columns:
+                results_df.loc[results_df["log2_ratio"] < float(act_log2fc_min), "active"] = False
+            results_df.to_csv(UPLOAD_DIR / "activity_results.tsv", sep="\t", index=False)
             progress.progress(100, text="Done!")
 
             st.success("All steps complete — go to Chat to run QC or QC & Plots to see results.")
