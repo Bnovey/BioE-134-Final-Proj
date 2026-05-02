@@ -713,6 +713,25 @@ if page == "📊 QC & Plots":
                     with cols[i % 3]:
                         st.markdown(f"**{badge} {label}**")
 
+                # QC summary CSV export
+                _qc_export_rows = []
+                for tool_key, label in tool_labels.items():
+                    res = tool_results.get(tool_key, {})
+                    _qc_export_rows.append({
+                        "check": label,
+                        "tool_key": tool_key,
+                        "pass": res.get("pass"),
+                        **{k: v for k, v in res.items() if k not in ("pass",) and not isinstance(v, (dict, list))},
+                    })
+                _qc_export_df = pd.DataFrame(_qc_export_rows)
+                _qc_csv = _qc_export_df.to_csv(index=False).encode()
+                st.download_button(
+                    "⬇ Download QC summary (CSV)",
+                    _qc_csv,
+                    file_name="library_qc_summary.csv",
+                    mime="text/csv",
+                )
+
                 st.divider()
 
                 # Charts using per-tool DataFrames
