@@ -743,5 +743,75 @@ def tool_plot_creseq(
     )
 
 
+@mcp.tool()
+def tool_variant_delta_scores(
+    activity_results_path: str | None = None,
+    fdr_threshold: float = 0.05,
+) -> dict:
+    """
+    Compute per-variant delta log₂ activity scores (mutant − reference).
+
+    For each variant family in the activity results, subtracts the reference
+    element's log₂(RNA/DNA) from each mutant to get Δlog₂. Applies
+    Benjamini–Hochberg FDR correction and flags significant hits.
+
+    Requires activity_results.tsv to have a variant_family column
+    (or an element_id/oligo_id following the {family}_{allele} naming
+    convention) and an is_reference column (or elements ending in '_ref').
+
+    Returns a summary dict and writes variant_delta_scores.tsv to the
+    output directory.
+    """
+    import pandas as pd
+    import numpy as np
+    from scipy import stats as _scipy_stats
+    from creseq_mcp.qc.activity import _bh_fdr
+
+    act_path = Path(_path(activity_results_path, "activity_results.tsv"))
+    if not act_path.exists():
+        return {"error": f"activity_results.tsv not found at {act_path}"}
+
+    df = pd.read_csv(act_path, sep="\t")
+    id_col = "element_id" if "element_id" in df.columns else "oligo_id"
+
+    if "variant_family" not in df.columns:
+        df["variant_family"] = df[id_col].astype(str).str.rsplit("_", n=1).str[0]
+    if "is_reference" not in df.columns:
+        df["is_reference"] = df[id_col].astype(str).str.lower().str.endswith("_ref")
+
+    ref_df = df[df["is_reference"]][["variant_family", "log2_ratio"]].rename(
+        columns={"log2_ratio": "ref_log2"}
+    )
+    mut_df = df[~df["is_reference"]].copy()
+    delta_df = mut_df.merge(ref_df, on="variant_family", how="inner")
+    delta_df["delta_log2"] = delta_df["log2_ratio"] - delta_df["ref_log2"]
+    delta_df.rename(columns={"log2_ratio": "mutant_log2"}, inplace=True)
+
+    if len(delta_df) == 0:
+        return {"error": "No mutant–reference pairs found. Check variant_family and is_reference columns."}
+
+    mean_d = float(delta_df["delta_log2"].mean())
+    std_d = max(float(delta_df["delta_log2"].std()), 1e-9)
+    z_scores = [(d - mean_d) / std_d for d in delta_df["delta_log2"]]
+    pvals = [float(2 * _scipy_stats.norm.sf(abs(z))) for z in z_scores]
+    delta_df["pval"] = pvals
+    delta_df["fdr"] = _bh_fdr(pvals)
+    delta_df["significant"] = delta_df["fdr"] < fdr_threshold
+
+    out_path = UPLOAD_DIR / "variant_delta_scores.tsv"
+    delta_df.to_csv(out_path, sep="\t", index=False)
+
+    n_sig = int(delta_df["significant"].sum())
+    top5 = delta_df.nlargest(5, "delta_log2")[[id_col, "variant_family", "delta_log2", "fdr"]].to_dict("records")
+    return {
+        "n_pairs": len(delta_df),
+        "n_significant": n_sig,
+        "n_families": int(delta_df["variant_family"].nunique()),
+        "median_delta_log2": float(delta_df["delta_log2"].median()),
+        "top_gain_variants": top5,
+        "output_path": str(out_path),
+    }
+
+
 if __name__ == "__main__":
     mcp.run()
