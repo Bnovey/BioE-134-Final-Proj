@@ -35,6 +35,7 @@ from creseq_mcp.literature.search import (
     interpret_literature_evidence,
     literature_search_for_motifs,
     motif_enrichment_summary,
+    prepare_literature_rag_context,
     prepare_rag_context,
     rank_cre_candidates,
     search_encode_tf,
@@ -433,11 +434,14 @@ def tool_literature_search_for_motifs(
     motif_col: str = "motif",
     target_cell_type: str | None = None,
     off_target_cell_type: str | None = None,
+    species: str = "human",
     top_n_motifs: int = 5,
     max_pubmed_results_per_motif: int = 3,
     max_database_results_per_motif: int = 3,
     email: str | None = None,
     ncbi_api_key: str | None = None,
+    output_path: str | None = None,
+    multi_intent_queries: bool = True,
 ) -> dict:
     """
     Run PubMed, JASPAR, and ENCODE API searches for top enriched motifs.
@@ -448,11 +452,14 @@ def tool_literature_search_for_motifs(
             motif_col=motif_col,
             target_cell_type=target_cell_type,
             off_target_cell_type=off_target_cell_type,
+            species=species,
             top_n_motifs=top_n_motifs,
             max_pubmed_results_per_motif=max_pubmed_results_per_motif,
             max_database_results_per_motif=max_database_results_per_motif,
             email=email,
             ncbi_api_key=ncbi_api_key,
+            output_path=output_path or str(UPLOAD_DIR / "literature_evidence.tsv"),
+            multi_intent_queries=multi_intent_queries,
         )
     )
 
@@ -467,6 +474,34 @@ def tool_interpret_literature_evidence(
     return _serialise(
         interpret_literature_evidence(
             evidence_table_path=evidence_table_path,
+        )
+    )
+
+
+@mcp.tool()
+def tool_prepare_literature_rag_context(
+    evidence_table_path: str | None = None,
+    max_records: int = 8,
+    min_score: float = 4.0,
+    max_context_chars: int = 700,
+    output_path: str | None = None,
+    max_per_tf: int = 5,
+) -> dict:
+    """
+    Build citation-ready context chunks from literature_evidence.tsv for RAG.
+
+    Filters low-scoring evidence, creates source IDs/citations, extracts compact
+    title/abstract/database snippets, and writes literature_rag_context.tsv by
+    default.
+    """
+    return _serialise(
+        prepare_literature_rag_context(
+            evidence_table_path=_path(evidence_table_path, "literature_evidence.tsv"),
+            max_records=max_records,
+            min_score=min_score,
+            max_context_chars=max_context_chars,
+            output_path=output_path or str(UPLOAD_DIR / "literature_rag_context.tsv"),
+            max_per_tf=max_per_tf,
         )
     )
 

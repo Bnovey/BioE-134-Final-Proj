@@ -16,6 +16,7 @@ dependencies = [
     "statsmodels>=0.14",
     "matplotlib>=3.7",
     "seaborn>=0.12",
+    "requests>=2.31",
     "pyjaspar>=4.0.0",
     "biopython>=1.80",
 ]

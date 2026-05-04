@@ -31,9 +31,14 @@ _SYSTEM_PROMPT = (
     "  4. tool_annotate_motifs — annotate top TF motif per CRE\n"
     "  5. tool_motif_enrichment or tool_motif_enrichment_summary — enrichment analysis\n"
     "  6. tool_variant_delta_scores — variant effect scoring\n"
-    "  7. tool_literature_search_for_motifs — PubMed / JASPAR / ENCODE evidence\n"
-    "  8. tool_plot_creseq — publication figures\n"
-    "Run tools in that order when the user asks to run the full pipeline."
+    "  7. tool_literature_search_for_motifs — PubMed / JASPAR / ENCODE evidence; writes literature_evidence.tsv\n"
+    "  8. tool_prepare_literature_rag_context — citation-ready RAG context from literature_evidence.tsv\n"
+    "  9. tool_interpret_literature_evidence — summarize evidence by motif/source\n"
+    " 10. tool_plot_creseq — publication figures\n"
+    "Run tools in that order when the user asks to run the full pipeline. "
+    "When answering literature questions, use tool_prepare_literature_rag_context "
+    "after literature search, ground claims in its context rows, and cite source_id, "
+    "citation, or url values instead of inventing unsupported literature claims."
 )
 
 
