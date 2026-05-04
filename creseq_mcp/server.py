@@ -52,9 +52,11 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 mcp = FastMCP(
     "creseq-mcp",
     instructions=(
-        "CRE-seq library QC toolkit. "
-        "File path arguments are optional — omit them to use data uploaded via the UI. "
-        "Do NOT use for lentiMPRA or STARR-seq without adjusting thresholds."
+        "Full CRE-seq analysis pipeline: library QC, barcode-to-oligo association, "
+        "DNA/RNA counting, activity scoring, motif enrichment, variant delta scores, "
+        "plotting, and RAG-based literature search. "
+        "File path arguments are optional — omit them to use files already in the session. "
+        "QC thresholds are calibrated for CRE-seq; adjust before applying to lentiMPRA or STARR-seq."
     ),
 )
 
@@ -255,7 +257,6 @@ def tool_library_summary_report(
         _path(design_manifest_path, "design_manifest.tsv"),
     ))
 
-
 @mcp.tool()
 def tool_run_association(
     fastq_r1: str,
@@ -298,13 +299,66 @@ def tool_run_association(
         mapq_threshold=mapq_threshold,
     )
 
-    # Copy outputs into UPLOAD_DIR so downstream tools can find them
     for fname in ("mapping_table.tsv", "plasmid_counts.tsv", "design_manifest.tsv"):
         src = assoc_dir / fname
         if src.exists():
             shutil.copy(src, UPLOAD_DIR / fname)
 
     return result
+
+
+@mcp.tool()
+def tool_process_dna_counting(
+    fastq_path: str,
+    barcode_len: int = 20,
+    barcode_end: str = "3prime",
+    max_mismatch: int = 0,
+) -> dict:
+    """
+    Count DNA barcodes from a plasmid-pool FASTQ → overwrites plasmid_counts.tsv.
+
+    Requires mapping_table.tsv from the association step.
+    barcode_end: "3prime" (default) or "5prime".
+    """
+    from creseq_mcp.activity.counting import process_dna_counting
+
+    return process_dna_counting(
+        fastq_path,
+        str(UPLOAD_DIR / "mapping_table.tsv"),
+        UPLOAD_DIR,
+        barcode_len=barcode_len,
+        barcode_end=barcode_end,
+        max_mismatch=max_mismatch,
+    )
+
+
+@mcp.tool()
+def tool_process_rna_counting(
+    fastq_paths: list[str],
+    rep_names: list[str] | None = None,
+    barcode_len: int = 20,
+    barcode_end: str = "3prime",
+    max_mismatch: int = 0,
+) -> dict:
+    """
+    Count RNA barcodes across one or more replicate FASTQs → writes rna_counts.tsv.
+
+    Requires mapping_table.tsv from the association step.
+    fastq_paths: list of FASTQ paths, one per replicate.
+    rep_names: optional list of replicate labels (default: rep1, rep2, …).
+    """
+    from creseq_mcp.activity.counting import process_rna_counting
+
+    return process_rna_counting(
+        fastq_paths,
+        str(UPLOAD_DIR / "mapping_table.tsv"),
+        UPLOAD_DIR,
+        rep_names=rep_names,
+        barcode_len=barcode_len,
+        barcode_end=barcode_end,
+        max_mismatch=max_mismatch,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Stats tool registrations

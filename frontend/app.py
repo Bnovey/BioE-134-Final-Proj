@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import time
 
@@ -14,6 +15,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(name)s  %(levelname)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 # Override with env vars: CRESEQ_ASSOC_DIR and CRESEQ_UPLOAD_DIR
 ASSOC_DIR = Path(os.environ.get("CRESEQ_ASSOC_DIR", Path.home() / "creseq_outputs"))
 UPLOAD_DIR = Path(os.environ.get("CRESEQ_UPLOAD_DIR", Path.home() / ".creseq" / "uploads"))

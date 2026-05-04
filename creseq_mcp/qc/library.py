@@ -225,69 +225,10 @@ def _fasta_record(oligo_id: str, seq: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# CIGAR / MD parsing
+# CIGAR query-length extraction (M/I/S ops consume query bases)
 # ---------------------------------------------------------------------------
 
 _CIGAR_RE = re.compile(r"(\d+)([MIDNSHP=X])")
-_MD_DELETION_RE = re.compile(r"\^[A-Z]+")
-_MD_MISMATCH_RE = re.compile(r"[A-Z]")
-
-
-def _parse_cigar_errors(cigar: str, md: str) -> dict[str, Any]:
-    """
-    Parse a CIGAR string and MD tag from an oligo-read alignment and return
-    per-read synthesis error statistics.
-
-    The query is an oligo read; the reference is the designed oligo sequence.
-    Soft-clipped bases indicate truncation or adaptor contamination.
-
-    Parameters
-    ----------
-    cigar : str  CIGAR string (e.g. ``84M``, ``5S79M``, ``10M1D73M``)
-    md    : str  MD tag string (e.g. ``84``, ``41A42``, ``^ATG81``)
-
-    Returns
-    -------
-    dict with keys:
-        mismatches, insertions, deletions, soft_clipped, is_perfect, observed_length
-    """
-    ops = _CIGAR_RE.findall(cigar)
-    if not ops:
-        raise ValueError(f"Cannot parse CIGAR string: {cigar!r}")
-
-    insertions = 0
-    deletions = 0
-    soft_clipped = 0
-    query_length = 0  # all query-consuming ops (M + I + S)
-
-    for count_str, op in ops:
-        count = int(count_str)
-        if op in ("M", "=", "X"):
-            query_length += count
-        elif op == "I":
-            insertions += count
-            query_length += count
-        elif op == "D":
-            deletions += count
-        elif op == "S":
-            soft_clipped += count
-            query_length += count
-        # H (hard clip) and N/P do not consume query
-
-    # Mismatches from MD: remove deletion markers (^ATG) then count remaining letters
-    md_no_del = _MD_DELETION_RE.sub("", md)
-    mismatches = len(_MD_MISMATCH_RE.findall(md_no_del))
-
-    is_perfect = mismatches == 0 and insertions == 0 and deletions == 0 and soft_clipped == 0
-
-    return {
-        "mismatches": mismatches,
-        "insertions": insertions,
-        "deletions": deletions,
-        "soft_clipped": soft_clipped,
-        "is_perfect": bool(is_perfect),
-        "observed_length": query_length,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -342,16 +283,6 @@ def _validate_creseq_assumptions(design_manifest: pd.DataFrame) -> list[str]:
     return msgs
 
 
-def _parse_errors_for_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Vectorise _parse_cigar_errors across a mapping-table DataFrame."""
-    parsed = df.apply(
-        lambda r: _parse_cigar_errors(r["cigar"], r["md"]),
-        axis=1,
-        result_type="expand",
-    )
-    return pd.concat([df.reset_index(drop=True), parsed], axis=1)
-
-
 # ---------------------------------------------------------------------------
 # Tool 1: barcode_complexity
 # ---------------------------------------------------------------------------
@@ -373,8 +304,7 @@ def barcode_complexity(
 
     Outputs:
         DataFrame — one row per oligo_id:
-            oligo_id, n_barcodes, n_perfect_barcodes, n_error_barcodes,
-            median_reads_per_barcode
+            oligo_id, n_barcodes, median_reads_per_barcode
         summary dict — median_barcodes_per_oligo, fraction_oligos_gte_{5,10,25,50,100},
             median_barcode_length_bp, warnings, pass
 
@@ -406,19 +336,14 @@ def barcode_complexity(
 
     _ = median_bc_len  # barcode length check removed
 
-    # Per-barcode error parsing
-    df = _parse_errors_for_df(df)
-
     # Per-oligo aggregation
     grp = df.groupby("oligo_id")
     result = pd.DataFrame(
         {
             "n_barcodes": grp["barcode"].count(),
-            "n_perfect_barcodes": grp["is_perfect"].sum().astype(int),
             "median_reads_per_barcode": grp["n_reads"].median(),
         }
     ).reset_index()
-    result["n_error_barcodes"] = result["n_barcodes"] - result["n_perfect_barcodes"]
 
     # Summary
     thresholds = [5, 10, 25, 50, 100]
@@ -904,8 +829,11 @@ def oligo_length_qc(
         warnings.warn(msg, CreSeqAssumptionWarning, stacklevel=2)
         warn_msgs.append(msg)
 
-    # Parse CIGAR for observed oligo lengths
-    mapping = _parse_errors_for_df(mapping)
+    # Derive observed query length from CIGAR (sum of M/I/S ops)
+    mapping = mapping.copy()
+    mapping["observed_length"] = mapping["cigar"].map(
+        lambda c: sum(int(n) for n, op in _CIGAR_RE.findall(c) if op in ("M", "I", "S", "=", "X"))
+    )
 
     def _length_stats(grp: pd.DataFrame, designed_length: float) -> pd.Series:
         obs = grp["observed_length"].values
