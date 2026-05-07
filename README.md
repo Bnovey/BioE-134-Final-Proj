@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 
-For our final project, our team built a Cre-Seq analyzer. Cre-seq is a massivily parallel reporter essay that measures the transcriptional activity of thousands of candidate cis-regulatory elements simultaneously by linking each element to a unique DNA barcode and quantifying barcode abundance in RNA versus DNA. Within our project, we built tools for processing raw sequencing  data and gathering read counts, quality control analysis of the library, activity calling, plotting, RAG based litererature search and annotation, and an MCP-backed Claude agent that allows users to run and interpret the full pipeline through natural language. We were inspired to build this from Agarwal, Inoue et al. (2025), 'Massively parallel characterization of transcriptional regulatory elements,' Nature [1].
+For our final project, our team built a Cre-Seq analyzer. Cre-seq is a massively parallel reporter assay that measures the transcriptional activity of thousands of candidate cis-regulatory elements simultaneously by linking each element to a unique DNA barcode and quantifying barcode abundance in RNA versus DNA. Within our project, we built tools for processing raw sequencing data and gathering read counts, quality control analysis of the library, activity calling, plotting, RAG based literature search and annotation, and an MCP-backed Claude agent that allows users to run and interpret the full pipeline through natural language. We were inspired to build this from Agarwal, Inoue et al. (2025), 'Massively parallel characterization of transcriptional regulatory elements,' Nature [1].
 
 **My contributions**: I worked on the data processing, QC, and MCP server for this project. The data processing steps (association and counting) are exposed through the MCP server alongside the QC tools, allowing users to run the full pipeline end-to-end through natural language.
 
@@ -198,7 +198,7 @@ Along the way, I ran into small issues with file formats and simple bugs in code
 
 ## 9. LLM Usage
 
-Most of my code was written with Claude Code. This was a great test on my ability to accurately prompt what functions I want written. Many times, I ran into issues with Claude not understanding what I want to write and it through my part of the project off track. To get over this, I had to carefully think about all aspects of the functions I wanted to write and even ideated with claude to help me flush out my ideas. 
+Most of my code was written with Claude Code. This was a great test on my ability to accurately prompt what functions I want written. Many times, I ran into issues with Claude not understanding what I want to write and it threw my part of the project off track. To get over this, I had to carefully think about all aspects of the functions I wanted to write and even ideated with Claude to help me flesh out my ideas. 
 
 The more I write with an LLM, the more I learn what level of abstraction I would be "vibe coding" at. How granualar should my prompts be? Should I ask it go write the entire QC library in one shot, or should I go tool by tool. What am I confortable with? I played around with this idea along the project and I am slowly finding that the LLM and I write code best at a level above individual functions but not too abstract where I'm not interacting with those smaller functions. 
 
